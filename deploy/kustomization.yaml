@@ -1,0 +1,5 @@
+resources:
+- ./service_account.yaml
+- ./hub_controller_clusterrole_binding.yaml
+- ./hub_controller_clusterrole.yaml
+- ./deployment.yaml

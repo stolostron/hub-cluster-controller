@@ -1,0 +1,32 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: hub-cluster-controller
+  labels:
+    app: hub-cluster-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hub-cluster-controller
+  template:
+    metadata:
+      labels:
+        app: hub-cluster-controller
+    spec:
+      serviceAccountName: hub-cluster-controller-sa
+      containers:
+      - name: hub-cluster-controller
+        image: quay.io/clyang82/hub-cluster-controller:v0.1.0
+        imagePullPolicy: IfNotPresent
+        args:
+          - "/hub-cluster-controller"
+          - "controller"
+          - "--v=2"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          runAsNonRoot: true
