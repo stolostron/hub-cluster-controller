@@ -20,14 +20,102 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 		},
 		Spec: workv1.ManifestWorkSpec{
 			Workload: workv1.ManifestsTemplate{
-				Manifests: []workv1.Manifest{},
+				Manifests: []workv1.Manifest{
+					{RawExtension: runtime.RawExtension{
+						Raw: []byte(`{
+	"apiVersion": "rbac.authorization.k8s.io/v1",
+	"kind": "ClusterRole",
+	"metadata": {
+		"name": "open-cluster-management:hub-cluster-controller"
+	},
+	"rules": [
+		{
+			"apiGroups": [
+				"operators.coreos.com"
+			],
+			"resources": [
+				"operatorgroups",
+				"subscriptions"
+			],
+			"verbs": [
+				"create",
+				"update"
+			]
+		}
+	]
+}`),
+					}},
+					{RawExtension: runtime.RawExtension{
+						Raw: []byte(`{
+	"apiVersion": "rbac.authorization.k8s.io/v1",
+	"kind": "ClusterRoleBinding",
+	"metadata": {
+		"name": "open-cluster-management-agent:klusterlet-work-sa"
+	},
+	"roleRef": {
+		"apiGroup": "rbac.authorization.k8s.io",
+		"kind": "ClusterRole",
+		"name": "open-cluster-management:hub-cluster-controller"
+	},
+	"subjects": [
+		{
+			"kind": "ServiceAccount",
+			"name": "klusterlet-work-sa",
+			"namespace": "open-cluster-management-agent"
+		}
+	]
+}`),
+					}},
+					{RawExtension: runtime.RawExtension{
+						Raw: []byte(`{
+	"apiVersion": "v1",
+	"kind": "Namespace",
+	"metadata": {
+		"name": "open-cluster-management"
+	}
+}`),
+					}},
+					{RawExtension: runtime.RawExtension{
+						Raw: []byte(`{
+	"apiVersion": "operators.coreos.com/v1",
+	"kind": "OperatorGroup",
+	"metadata": {
+		"name": "open-cluster-management-group",
+		"namespace": "open-cluster-management"
+	},
+	"spec": {
+		"targetNamespaces": [
+			"open-cluster-management"
+		]
+	}
+}`),
+					}},
+					{RawExtension: runtime.RawExtension{
+						Raw: []byte(`{
+	"apiVersion": "operators.coreos.com/v1alpha1",
+	"kind": "Subscription",
+	"metadata": {
+		"name": "acm-operator-subscription",
+		"namespace": "open-cluster-management"
+	},
+	"spec": {
+		"channel": "release-2.4",
+		"installPlanApproval": "Automatic",
+		"name": "advanced-cluster-management",
+		"source": "redhat-operators",
+		"sourceNamespace": "openshift-marketplace",
+		"startingCSV": "advanced-cluster-management.v2.4.1"
+	}
+}`),
+					}},
+				},
 			},
 			ManifestConfigs: []workv1.ManifestConfigOption{
 				{
 					ResourceIdentifier: workv1.ResourceIdentifier{
 						Group:     "operators.coreos.com",
-						Resource:  "ClusterServiceVersion",
-						Name:      "advanced-cluster-management.v2.4.1",
+						Resource:  "subscriptions",
+						Name:      "acm-operator-subscription",
 						Namespace: "open-cluster-management",
 					},
 					FeedbackRules: []workv1.FeedbackRule{
@@ -35,8 +123,8 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 							Type: workv1.JSONPathsType,
 							JsonPaths: []workv1.JsonPath{
 								{
-									Name: "phase",
-									Path: ".phase",
+									Name: "state",
+									Path: ".status.state",
 								},
 							},
 						},
@@ -57,15 +145,39 @@ func CreateMCHManifestwork(namespace string) *workv1.ManifestWork {
 			Workload: workv1.ManifestsTemplate{
 				Manifests: []workv1.Manifest{
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`apiVersion: operator.open-cluster-management.io/v1
-kind: MultiClusterHub
-metadata:
-  name: multiclusterhub
-  namespace: open-cluster-management
-spec:
-  disableHubSelfManagement: true
-`),
+						Raw: []byte(`{
+	"apiVersion": "operator.open-cluster-management.io/v1",
+	"kind": "MultiClusterHub",
+	"metadata": {
+		"name": "multiclusterhub",
+		"namespace":"open-cluster-management"
+	},
+	"spec": {
+		"disableHubSelfManagement": true
+	}
+}`),
 					}},
+				},
+			},
+			ManifestConfigs: []workv1.ManifestConfigOption{
+				{
+					ResourceIdentifier: workv1.ResourceIdentifier{
+						Group:     "operator.open-cluster-management.io",
+						Resource:  "multiclusterhubs",
+						Name:      "multiclusterhub",
+						Namespace: "open-cluster-management",
+					},
+					FeedbackRules: []workv1.FeedbackRule{
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "state",
+									Path: ".status.phase",
+								},
+							},
+						},
+					},
 				},
 			},
 		},

@@ -6,6 +6,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,10 +18,6 @@ import (
 	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
 	workinformerv1 "open-cluster-management.io/api/client/work/informers/externalversions/work/v1"
 	worklisterv1 "open-cluster-management.io/api/client/work/listers/work/v1"
-)
-
-const (
-	manifestDir = "pkg/hub/cluster"
 )
 
 // clusterController reconciles instances of ManagedCluster on the hub.
@@ -96,10 +93,12 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return err
 	}
 
+	desiredSubscription := CreateSubManifestwork(managedClusterName)
 	subscription, err := c.workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating subscription manifestwork in %s namespace", managedClusterName)
-		_, err := c.workclient.ManifestWorks(managedClusterName).Create(ctx, CreateSubManifestwork(managedClusterName), metav1.CreateOptions{})
+		_, err := c.workclient.ManifestWorks(managedClusterName).
+			Create(ctx, desiredSubscription, metav1.CreateOptions{})
 		if err != nil {
 			return err
 		}
@@ -109,19 +108,42 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return err
 	}
 
+	if !equality.Semantic.DeepEqual(subscription.Spec, desiredSubscription.Spec) {
+		desiredSubscription.ObjectMeta.ResourceVersion = subscription.ObjectMeta.ResourceVersion
+		_, err := c.workclient.ManifestWorks(managedClusterName).
+			Update(ctx, desiredSubscription, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
 	// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
 	for _, conditions := range subscription.Status.ResourceStatus.Manifests {
-		if conditions.ResourceMeta.Kind == "ClusterServiceVersion" {
+		if conditions.ResourceMeta.Kind == "Subscription" {
 			for _, value := range conditions.StatusFeedbacks.Values {
-				if value.Name == "phase" && *value.Value.String == "Succeeded" {
-					klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
-					_, err := c.workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
+				if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
+					desiredMCH := CreateMCHManifestwork(managedClusterName)
+					mch, err := c.workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
 					if errors.IsNotFound(err) {
-						_, err := c.workclient.ManifestWorks(managedClusterName).Create(ctx, CreateMCHManifestwork(managedClusterName), metav1.CreateOptions{})
+						klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
+						_, err := c.workclient.ManifestWorks(managedClusterName).
+							Create(ctx, desiredMCH, metav1.CreateOptions{})
 						if err != nil {
 							return err
 						}
 					}
+					if err != nil {
+						return err
+					}
+					if !equality.Semantic.DeepEqual(mch.Spec, desiredMCH.Spec) {
+						desiredMCH.ObjectMeta.ResourceVersion = mch.ObjectMeta.ResourceVersion
+						_, err := c.workclient.ManifestWorks(managedClusterName).
+							Update(ctx, desiredMCH, metav1.UpdateOptions{})
+						if err != nil {
+							return err
+						}
+					}
+					return nil
 				}
 			}
 		}
