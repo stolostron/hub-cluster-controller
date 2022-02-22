@@ -6,7 +6,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,7 +81,7 @@ func NewHubClusterController(
 
 func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	managedClusterName := syncCtx.QueueKey()
-	klog.V(2).Infof("Reconciling ManagedCluster %s", managedClusterName)
+	klog.V(2).Infof("Reconciling hub cluster for %s", managedClusterName)
 	_, err := c.clusterLister.Get(managedClusterName)
 	if errors.IsNotFound(err) {
 		// Spoke cluster not found, could have been deleted, delete manifestwork.
@@ -108,7 +107,11 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return err
 	}
 
-	if !equality.Semantic.DeepEqual(subscription.Spec, desiredSubscription.Spec) {
+	updated, err := EnsureManifestWork(subscription, desiredSubscription)
+	if err != nil {
+		return err
+	}
+	if updated {
 		desiredSubscription.ObjectMeta.ResourceVersion = subscription.ObjectMeta.ResourceVersion
 		_, err := c.workclient.ManifestWorks(managedClusterName).
 			Update(ctx, desiredSubscription, metav1.UpdateOptions{})
@@ -135,7 +138,12 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 					if err != nil {
 						return err
 					}
-					if !equality.Semantic.DeepEqual(mch.Spec, desiredMCH.Spec) {
+
+					updated, err := EnsureManifestWork(mch, desiredMCH)
+					if err != nil {
+						return err
+					}
+					if updated {
 						desiredMCH.ObjectMeta.ResourceVersion = mch.ObjectMeta.ResourceVersion
 						_, err := c.workclient.ManifestWorks(managedClusterName).
 							Update(ctx, desiredMCH, metav1.UpdateOptions{})

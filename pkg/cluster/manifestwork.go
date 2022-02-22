@@ -1,8 +1,11 @@
 package cluster
 
 import (
+	"encoding/json"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 
 	workv1 "open-cluster-management.io/api/work/v1"
 )
@@ -182,4 +185,22 @@ func CreateMCHManifestwork(namespace string) *workv1.ManifestWork {
 			},
 		},
 	}
+}
+
+func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
+	// compare the manifests
+	existingBytes, err := json.Marshal(existing.Spec)
+	if err != nil {
+		return false, err
+	}
+	desiredBytes, err := json.Marshal(desired.Spec)
+	if err != nil {
+		return false, err
+	}
+	if string(existingBytes) != string(desiredBytes) {
+		klog.V(2).Infof("the existing manifestwork is %s", string(existingBytes))
+		klog.V(2).Infof("the desired manifestwork is %s", string(desiredBytes))
+		return true, nil
+	}
+	return false, nil
 }
