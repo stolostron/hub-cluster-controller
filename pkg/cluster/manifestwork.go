@@ -138,7 +138,31 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 	}
 }
 
-func CreateMCHManifestwork(namespace string) *workv1.ManifestWork {
+func CreateMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWork, error) {
+	mchJson := `{
+		"apiVersion": "operator.open-cluster-management.io/v1",
+		"kind": "MultiClusterHub",
+		"metadata": {
+			"name": "multiclusterhub",
+			"namespace":"open-cluster-management"
+		},
+		"spec": {
+			"disableHubSelfManagement": true
+		}
+	}`
+	if userDefinedMCH != "" {
+		var mch interface{}
+		err := json.Unmarshal([]byte(userDefinedMCH), &mch)
+		if err != nil {
+			return nil, err
+		}
+		mch.(map[string]interface{})["spec"].(map[string]interface{})["disableHubSelfManagement"] = true
+		mchBytes, err := json.Marshal(mch)
+		if err != nil {
+			return nil, err
+		}
+		mchJson = string(mchBytes)
+	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + HOH_HUB_CLUSTER_MCH,
@@ -148,17 +172,7 @@ func CreateMCHManifestwork(namespace string) *workv1.ManifestWork {
 			Workload: workv1.ManifestsTemplate{
 				Manifests: []workv1.Manifest{
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
-	"apiVersion": "operator.open-cluster-management.io/v1",
-	"kind": "MultiClusterHub",
-	"metadata": {
-		"name": "multiclusterhub",
-		"namespace":"open-cluster-management"
-	},
-	"spec": {
-		"disableHubSelfManagement": true
-	}
-}`),
+						Raw: []byte(mchJson),
 					}},
 				},
 			},
@@ -184,7 +198,7 @@ func CreateMCHManifestwork(namespace string) *workv1.ManifestWork {
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {

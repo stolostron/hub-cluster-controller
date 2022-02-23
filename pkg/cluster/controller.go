@@ -82,7 +82,7 @@ func NewHubClusterController(
 func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	managedClusterName := syncCtx.QueueKey()
 	klog.V(2).Infof("Reconciling hub cluster for %s", managedClusterName)
-	_, err := c.clusterLister.Get(managedClusterName)
+	managedCluster, err := c.clusterLister.Get(managedClusterName)
 	if errors.IsNotFound(err) {
 		// Spoke cluster not found, could have been deleted, delete manifestwork.
 		// TODO: delete manifestwork
@@ -125,7 +125,16 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		if conditions.ResourceMeta.Kind == "Subscription" {
 			for _, value := range conditions.StatusFeedbacks.Values {
 				if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
-					desiredMCH := CreateMCHManifestwork(managedClusterName)
+					//fetch user defined mch from annotation
+					userDefinedMCH := ""
+					if managedCluster.Annotations != nil {
+						userDefinedMCH = managedCluster.Annotations["mch"]
+					}
+
+					desiredMCH, err := CreateMCHManifestwork(managedClusterName, userDefinedMCH)
+					if err != nil {
+						return err
+					}
 					mch, err := c.workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
 					if errors.IsNotFound(err) {
 						klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
