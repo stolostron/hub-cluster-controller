@@ -20,6 +20,9 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
 		},
 		Spec: workv1.ManifestWorkSpec{
 			Workload: workv1.ManifestsTemplate{
@@ -167,6 +170,9 @@ func CreateMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + HOH_HUB_CLUSTER_MCH,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
 		},
 		Spec: workv1.ManifestWorkSpec{
 			Workload: workv1.ManifestsTemplate{
@@ -191,6 +197,15 @@ func CreateMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 								{
 									Name: "state",
 									Path: ".status.phase",
+								},
+							},
+						},
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "currentVersion",
+									Path: ".status.currentVersion",
 								},
 							},
 						},
