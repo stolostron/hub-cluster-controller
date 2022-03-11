@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	"gopkg.in/yaml.v2"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -317,7 +316,7 @@ func getExistingPackageManifestInfo(subManifest *workv1.ManifestWork) (*packagem
 		klog.V(2).Infof("manifest is %s", string(manifest.RawExtension.Raw))
 		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
 			sub := operatorv1alpha1.Subscription{}
-			err := yaml.Unmarshal(manifest.RawExtension.Raw, &sub)
+			err := json.Unmarshal(manifest.RawExtension.Raw, &sub)
 			if err != nil {
 				return nil, err
 			}
