@@ -59,7 +59,7 @@ func NewPackageManifestController(
 				if err != nil {
 					return false
 				}
-				namespace, name, err := cache.SplitMetaNamespaceKey(key)
+				_, name, err := cache.SplitMetaNamespaceKey(key)
 				if err != nil {
 					// ignore addon whose key is not in format: namespace/name
 					return false
@@ -95,7 +95,7 @@ func (c *packageManifestController) sync(ctx context.Context, syncCtx factory.Sy
 
 	statusObj := obj.Object["status"].(map[string]interface{})
 
-	if statusObj["catalogSourceNamespace"].(string) != "openshift-marketplace" {
+	if statusObj["catalogSource"].(string) != "redhat-operators" {
 		return nil
 	}
 
