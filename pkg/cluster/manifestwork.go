@@ -117,12 +117,12 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 		"namespace": "open-cluster-management"
 	},
 	"spec": {
-		"channel": %s,
+		"channel": "%s",
 		"installPlanApproval": "Automatic",
 		"name": "advanced-cluster-management",
 		"source": "redhat-operators",
 		"sourceNamespace": "openshift-marketplace",
-		"startingCSV": %s
+		"startingCSV": "%s"
 	}
 }`, p.DefaultChannel, p.CurrentCSV)),
 					}},
@@ -239,8 +239,6 @@ func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
 		return false, err
 	}
 	if string(existingBytes) != string(desiredBytes) {
-		klog.V(2).Infof("the existing manifestwork is %s", string(existingBytes))
-		klog.V(2).Infof("the desired manifestwork is %s", string(desiredBytes))
 		return true, nil
 	}
 	return false, nil

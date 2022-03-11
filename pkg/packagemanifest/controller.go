@@ -65,7 +65,7 @@ func NewPackageManifestController(
 					return false
 				}
 				// only enqueue when the name is advanced-cluster-management
-				if name == "advanced-cluster-management" && namespace == "openshift-marketplace" {
+				if name == "advanced-cluster-management" {
 					return true
 				}
 				return false
@@ -94,6 +94,10 @@ func (c *packageManifestController) sync(ctx context.Context, syncCtx factory.Sy
 	}
 
 	statusObj := obj.Object["status"].(map[string]interface{})
+
+	if statusObj["catalogSourceNamespace"].(string) != "openshift-marketplace" {
+		return nil
+	}
 
 	defaultChannel := statusObj["defaultChannel"].(string)
 	klog.V(2).Infof("the defaultChannel is %s", defaultChannel)
