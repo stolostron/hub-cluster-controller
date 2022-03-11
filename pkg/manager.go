@@ -7,6 +7,9 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/spf13/cobra"
 	"github.com/stolostron/hub-cluster-controller/pkg/version"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/rest"
 	clusterv1client "open-cluster-management.io/api/client/cluster/clientset/versioned"
 	clusterv1informers "open-cluster-management.io/api/client/cluster/informers/externalversions"
@@ -14,6 +17,7 @@ import (
 	workv1informers "open-cluster-management.io/api/client/work/informers/externalversions"
 
 	"github.com/stolostron/hub-cluster-controller/pkg/cluster"
+	"github.com/stolostron/hub-cluster-controller/pkg/packagemanifest"
 )
 
 var ResyncInterval = 5 * time.Minute
@@ -39,6 +43,11 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 		kubeConfig.Burst = 200
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
+	if err != nil {
+		return err
+	}
+
 	clusterClient, err := clusterv1client.NewForConfig(kubeConfig)
 	if err != nil {
 		return err
@@ -51,6 +60,18 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 
 	clusterInformers := clusterv1informers.NewSharedInformerFactory(clusterClient, 10*time.Minute)
 	workInformers := workv1informers.NewSharedInformerFactory(workClient, 10*time.Minute)
+	dynamicInformerFactory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 10*time.Minute)
+
+	packageManifestController := packagemanifest.NewPackageManifestController(
+		dynamicClient,
+		workClient.WorkV1(),
+		clusterInformers.Cluster().V1().ManagedClusters(),
+		workInformers.Work().V1().ManifestWorks(),
+		dynamicInformerFactory.ForResource(schema.GroupVersionResource{
+			Group: "packages.operators.coreos.com", Version: "v1", Resource: "packagemanifests",
+		}),
+		controllerContext.EventRecorder,
+	)
 
 	hubClusterController := cluster.NewHubClusterController(
 		workClient.WorkV1(),
@@ -61,8 +82,10 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 
 	go clusterInformers.Start(ctx.Done())
 	go workInformers.Start(ctx.Done())
+	go dynamicInformerFactory.Start(ctx.Done())
 
 	go hubClusterController.Run(ctx, 1)
+	go packageManifestController.Run(ctx, 1)
 
 	<-ctx.Done()
 	return nil
