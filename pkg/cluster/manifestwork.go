@@ -24,8 +24,7 @@ const (
 	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
 )
 
-func createSubManifestwork(namespace string) *workv1.ManifestWork {
-	p := packagemanifest.GetPackageManifest()
+func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
 	if p == nil || p.CurrentCSV == "" || p.DefaultChannel == "" {
 		return nil
 	}
@@ -250,7 +249,7 @@ func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
 func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface,
 	workLister worklisterv1.ManifestWorkLister, managedClusterName string) (*workv1.ManifestWork, error) {
 
-	desiredSubscription := createSubManifestwork(managedClusterName)
+	desiredSubscription := createSubManifestwork(managedClusterName, packagemanifest.GetPackageManifest())
 	if desiredSubscription == nil {
 		return nil, nil
 	}
@@ -276,25 +275,7 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		return nil, err
 	}
 	klog.V(2).Infof("the existing packagemanifest is %+v for managedcluster %s", p, managedClusterName)
-
-	for _, manifest := range desiredSubscription.Spec.Workload.Manifests {
-		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
-			sub := operatorv1alpha1.Subscription{}
-			err := json.Unmarshal(manifest.RawExtension.Raw, &sub)
-			if err != nil {
-				return nil, err
-			}
-			sub.Spec.Channel = p.DefaultChannel
-			sub.Spec.StartingCSV = p.CurrentCSV
-			subStr, err := json.Marshal(sub)
-			if err != nil {
-				return nil, err
-			}
-			manifest.RawExtension = runtime.RawExtension{
-				Raw: []byte(subStr),
-			}
-		}
-	}
+	desiredSubscription = createSubManifestwork(managedClusterName, p)
 
 	updated, err := EnsureManifestWork(subscription, desiredSubscription)
 	if err != nil {
@@ -313,7 +294,6 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 
 func getExistingPackageManifestInfo(subManifest *workv1.ManifestWork) (*packagemanifest.PackageManifest, error) {
 	for _, manifest := range subManifest.Spec.Workload.Manifests {
-		klog.V(2).Infof("manifest is %s", string(manifest.RawExtension.Raw))
 		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
 			sub := operatorv1alpha1.Subscription{}
 			err := json.Unmarshal(manifest.RawExtension.Raw, &sub)
