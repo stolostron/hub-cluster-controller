@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 
 	clusterinformerv1 "open-cluster-management.io/api/client/cluster/informers/externalversions/cluster/v1"
 	clusterlisterv1 "open-cluster-management.io/api/client/cluster/listers/cluster/v1"
@@ -41,6 +42,7 @@ func NewPackageManifestController(
 	packageGenericInformer informers.GenericInformer,
 	recorder events.Recorder) factory.Controller {
 	c := &packageManifestController{
+		dynamicClient: dynamicClient,
 		clusterLister: clusterInformer.Lister(),
 		workLister:    workInformer.Lister(),
 		cache:         resourceapply.NewResourceCache(),
@@ -94,15 +96,18 @@ func (c *packageManifestController) sync(ctx context.Context, syncCtx factory.Sy
 	statusObj := obj.Object["status"].(map[string]interface{})
 
 	defaultChannel := statusObj["defaultChannel"].(string)
-	currentCSV := ""
+	klog.V(2).Infof("the defaultChannel is %s", defaultChannel)
 
-	channels := statusObj["channels"].([]map[string]interface{})
+	currentCSV := ""
+	channels := statusObj["channels"].([]interface{})
 
 	for _, channel := range channels {
-		if channel["name"].(string) == defaultChannel {
-			currentCSV = channel["currentCSV"].(string)
+		if channel.(map[string]interface{})["name"].(string) == defaultChannel {
+			currentCSV = channel.(map[string]interface{})["currentCSV"].(string)
 		}
 	}
+	klog.V(2).Infof("the currentCSV is %s", currentCSV)
+
 	//the PackageManifest is changed, need to store this new value
 	SetPackageManifest(&PackageManifest{
 		DefaultChannel: defaultChannel,

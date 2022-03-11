@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"gopkg.in/yaml.v2"
@@ -26,7 +27,7 @@ const (
 
 func createSubManifestwork(namespace string) *workv1.ManifestWork {
 	p := packagemanifest.GetPackageManifest()
-	if p.CurrentCSV == "" || p.DefaultChannel == "" {
+	if p == nil || p.CurrentCSV == "" || p.DefaultChannel == "" {
 		return nil
 	}
 	return &workv1.ManifestWork{
@@ -275,18 +276,18 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 	if err != nil {
 		return nil, err
 	}
-	klog.V(2).Infof("the existing packagemanifest is %v for managedcluster %s", p, managedClusterName)
+	klog.V(2).Infof("the existing packagemanifest is %+v for managedcluster %s", p, managedClusterName)
 
 	for _, manifest := range desiredSubscription.Spec.Workload.Manifests {
-		if manifest.RawExtension.Object.GetObjectKind().GroupVersionKind().Kind == "Subscription" {
+		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
 			sub := operatorv1alpha1.Subscription{}
-			err := yaml.Unmarshal(manifest.RawExtension.Raw, &sub)
+			err := json.Unmarshal(manifest.RawExtension.Raw, &sub)
 			if err != nil {
 				return nil, err
 			}
 			sub.Spec.Channel = p.DefaultChannel
 			sub.Spec.StartingCSV = p.CurrentCSV
-			subStr, err := yaml.Marshal(sub)
+			subStr, err := json.Marshal(sub)
 			if err != nil {
 				return nil, err
 			}
@@ -313,7 +314,8 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 
 func getExistingPackageManifestInfo(subManifest *workv1.ManifestWork) (*packagemanifest.PackageManifest, error) {
 	for _, manifest := range subManifest.Spec.Workload.Manifests {
-		if manifest.RawExtension.Object.GetObjectKind().GroupVersionKind().Kind == "Subscription" {
+		klog.V(2).Infof("manifest is %s", string(manifest.RawExtension.Raw))
+		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
 			sub := operatorv1alpha1.Subscription{}
 			err := yaml.Unmarshal(manifest.RawExtension.Raw, &sub)
 			if err != nil {
