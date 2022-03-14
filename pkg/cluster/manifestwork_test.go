@@ -7,7 +7,7 @@ import (
 )
 
 func TestCreateMCHManifestwork(t *testing.T) {
-	mch, _ := CreateMCHManifestwork("test", `{
+	mch, _ := createMCHManifestwork("test", `{
 		"apiVersion": "operator.open-cluster-management.io/v1",
 		"kind": "MultiClusterHub",
 		"metadata": {

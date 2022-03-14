@@ -1,13 +1,22 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
+	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 
+	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
+	worklisterv1 "open-cluster-management.io/api/client/work/listers/work/v1"
 	workv1 "open-cluster-management.io/api/work/v1"
+
+	"github.com/stolostron/hub-cluster-controller/pkg/packagemanifest"
 )
 
 const (
@@ -15,7 +24,10 @@ const (
 	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
 )
 
-func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
+func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
+	if p == nil || p.CurrentCSV == "" || p.DefaultChannel == "" {
+		return nil
+	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION,
@@ -97,7 +109,7 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 }`),
 					}},
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
+						Raw: []byte(fmt.Sprintf(`{
 	"apiVersion": "operators.coreos.com/v1alpha1",
 	"kind": "Subscription",
 	"metadata": {
@@ -105,14 +117,14 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 		"namespace": "open-cluster-management"
 	},
 	"spec": {
-		"channel": "release-2.4",
+		"channel": "%s",
 		"installPlanApproval": "Automatic",
 		"name": "advanced-cluster-management",
 		"source": "redhat-operators",
 		"sourceNamespace": "openshift-marketplace",
-		"startingCSV": "advanced-cluster-management.v2.4.1"
+		"startingCSV": "%s"
 	}
-}`),
+}`, p.DefaultChannel, p.CurrentCSV)),
 					}},
 				},
 			},
@@ -141,7 +153,7 @@ func CreateSubManifestwork(namespace string) *workv1.ManifestWork {
 	}
 }
 
-func CreateMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWork, error) {
+func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWork, error) {
 	mchJson := `{
 		"apiVersion": "operator.open-cluster-management.io/v1",
 		"kind": "MultiClusterHub",
@@ -227,9 +239,110 @@ func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
 		return false, err
 	}
 	if string(existingBytes) != string(desiredBytes) {
-		klog.V(2).Infof("the existing manifestwork is %s", string(existingBytes))
-		klog.V(2).Infof("the desired manifestwork is %s", string(desiredBytes))
 		return true, nil
 	}
 	return false, nil
+}
+
+func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface,
+	workLister worklisterv1.ManifestWorkLister, managedClusterName string) (*workv1.ManifestWork, error) {
+
+	desiredSubscription := createSubManifestwork(managedClusterName, packagemanifest.GetPackageManifest())
+	if desiredSubscription == nil {
+		return nil, nil
+	}
+
+	subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION)
+	if errors.IsNotFound(err) {
+		klog.V(2).Infof("creating subscription manifestwork in %s namespace", managedClusterName)
+		_, err := workclient.ManifestWorks(managedClusterName).
+			Create(ctx, desiredSubscription, metav1.CreateOptions{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Do not need to update if the packagemanifest is changed
+	// for example: the existing DefaultChannel is release-2.4, once the new release is delivered.
+	// the DefaultChannel will be release-2.5. but we do not need to update the manifestwork.
+	p, err := getExistingPackageManifestInfo(subscription)
+	if err != nil {
+		return nil, err
+	}
+	klog.V(2).Infof("the existing packagemanifest is %+v for managedcluster %s", p, managedClusterName)
+	desiredSubscription = createSubManifestwork(managedClusterName, p)
+
+	updated, err := EnsureManifestWork(subscription, desiredSubscription)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		desiredSubscription.ObjectMeta.ResourceVersion = subscription.ObjectMeta.ResourceVersion
+		subscription, err = workclient.ManifestWorks(managedClusterName).
+			Update(ctx, desiredSubscription, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return subscription, nil
+}
+
+func getExistingPackageManifestInfo(subManifest *workv1.ManifestWork) (*packagemanifest.PackageManifest, error) {
+	for _, manifest := range subManifest.Spec.Workload.Manifests {
+		if strings.Contains(string(manifest.RawExtension.Raw), `"kind":"Subscription"`) {
+			sub := operatorv1alpha1.Subscription{}
+			err := json.Unmarshal(manifest.RawExtension.Raw, &sub)
+			if err != nil {
+				return nil, err
+			}
+			return &packagemanifest.PackageManifest{
+				DefaultChannel: sub.Spec.Channel,
+				CurrentCSV:     sub.Spec.StartingCSV,
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface,
+	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
+	userDefinedMCH := ""
+	// Do not need to support customization so far
+	// if managedCluster.Annotations != nil {
+	// 	userDefinedMCH = managedCluster.Annotations["mch"]
+	// }
+
+	desiredMCH, err := createMCHManifestwork(managedClusterName, userDefinedMCH)
+	if err != nil {
+		return err
+	}
+	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
+	if errors.IsNotFound(err) {
+		klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
+		_, err := workclient.ManifestWorks(managedClusterName).
+			Create(ctx, desiredMCH, metav1.CreateOptions{})
+		if err != nil {
+			return err
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	updated, err := EnsureManifestWork(mch, desiredMCH)
+	if err != nil {
+		return err
+	}
+	if updated {
+		desiredMCH.ObjectMeta.ResourceVersion = mch.ObjectMeta.ResourceVersion
+		_, err := workclient.ManifestWorks(managedClusterName).
+			Update(ctx, desiredMCH, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

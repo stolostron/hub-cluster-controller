@@ -17,3 +17,7 @@ rules:
 - apiGroups: [""]
   resources: ["namespaces", "serviceaccounts", "configmaps", "events"]
   verbs: ["get", "list", "watch", "create", "delete", "update"]
+# allow hub to get packagemanifest to fetch the defaultChannel and currentCSV
+- apiGroups: ["packages.operators.coreos.com"]
+  resources: ["packagemanifests"]
+  verbs: ["get", "list"]
