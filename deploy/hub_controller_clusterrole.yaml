@@ -21,3 +21,7 @@ rules:
 - apiGroups: ["packages.operators.coreos.com"]
   resources: ["packagemanifests"]
   verbs: ["get", "list"]
+# get multicluster-operators-channel status via managedclusterviews
+- apiGroups: ["view.open-cluster-management.io"]
+  resources: ["managedclusterviews"]
+  verbs: ["get", "list", "watch", "create", "delete", "update"]

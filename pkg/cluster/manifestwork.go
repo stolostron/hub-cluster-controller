@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
-
 	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
 	worklisterv1 "open-cluster-management.io/api/client/work/listers/work/v1"
 	workv1 "open-cluster-management.io/api/work/v1"
@@ -22,6 +21,7 @@ import (
 const (
 	HOH_HUB_CLUSTER_SUBSCRIPTION = "hoh-hub-cluster-subscription"
 	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
+	MULTICLUSTER_CHANNEL_NAME    = "multicluster-operators-channel"
 )
 
 func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {

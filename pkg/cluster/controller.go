@@ -20,6 +20,7 @@ import (
 
 // clusterController reconciles instances of ManagedCluster on the hub.
 type clusterController struct {
+	dynamicClient dynamic.Interface,
 	workclient    workclientv1.WorkV1Interface
 	clusterLister clusterlisterv1.ManagedClusterLister
 	workLister    worklisterv1.ManifestWorkLister
@@ -29,11 +30,13 @@ type clusterController struct {
 
 // NewHubClusterController creates a new hub cluster controller
 func NewHubClusterController(
+	dynamicClient dynamic.Interface,
 	workclient workclientv1.WorkV1Interface,
 	clusterInformer clusterinformerv1.ManagedClusterInformer,
 	workInformer workinformerv1.ManifestWorkInformer,
 	recorder events.Recorder) factory.Controller {
 	c := &clusterController{
+		dynamicClient: dynamicClient,
 		workclient:    workclient,
 		clusterLister: clusterInformer.Lister(),
 		workLister:    workInformer.Lister(),
@@ -82,15 +85,6 @@ func NewHubClusterController(
 func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	managedClusterName := syncCtx.QueueKey()
 	klog.V(2).Infof("Reconciling for %s", managedClusterName)
-	// managedCluster, err := c.clusterLister.Get(managedClusterName)
-	// if errors.IsNotFound(err) {
-	// 	// Spoke cluster not found, could have been deleted, delete manifestwork.
-	// 	// TODO: delete manifestwork
-	// 	return nil
-	// }
-	// if err != nil {
-	// 	return err
-	// }
 	subscription, err := ApplySubManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
 	if err != nil {
 		return err
@@ -100,17 +94,26 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
 		return nil
 	}
-	// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
+	// if the csv PHASE is Succeeded, then create managedclusterview to ensure multicluster-operators-channel is ready
 	for _, conditions := range subscription.Status.ResourceStatus.Manifests {
 		if conditions.ResourceMeta.Kind == "Subscription" {
 			for _, value := range conditions.StatusFeedbacks.Values {
 				if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
-					//fetch user defined mch from annotation
-					err := ApplyMCHManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
+					channel, err := ApplyChannelManagedClusterView(ctx, c.dynamicClient, managedClusterName)
 					if err != nil {
 						return err
 					}
-					return nil
+					if isChannelReady(channel) {
+						// apply mch manifestwork to install Hub once the multicluster-operators-channel is ready
+						err := ApplyMCHManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
+						if err != nil {
+							return err
+						}
+						return nil
+					} else {
+						syncCtx.Queue().AddAfter(managedClusterName, 30*time.Second)
+						return nil
+					}
 				}
 			}
 		}
