@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 
 	clusterinformerv1 "open-cluster-management.io/api/client/cluster/informers/externalversions/cluster/v1"
@@ -20,7 +21,7 @@ import (
 
 // clusterController reconciles instances of ManagedCluster on the hub.
 type clusterController struct {
-	dynamicClient dynamic.Interface,
+	dynamicClient dynamic.Interface
 	workclient    workclientv1.WorkV1Interface
 	clusterLister clusterlisterv1.ManagedClusterLister
 	workLister    worklisterv1.ManifestWorkLister

@@ -37,14 +37,11 @@ func ApplyChannelManagedClusterView(ctx context.Context,
 		Group:    "view.open-cluster-management.io",
 		Version:  "v1beta1",
 		Resource: "managedclusterviews"}
+	desiredChannel := createChannelManagedClusterView(managedClusterName)
 
 	existingChannel, err := dynamicClient.Resource(crResource).
 		Namespace(managedClusterName).
 		Get(ctx, MULTICLUSTER_CHANNEL_NAME, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	desiredChannel := createChannelManagedClusterView(managedClusterName)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating multicluster-operators-channel managedclusterviews in %s namespace", managedClusterName)
 		_, err := dynamicClient.Resource(crResource).
