@@ -21,7 +21,6 @@ import (
 const (
 	HOH_HUB_CLUSTER_SUBSCRIPTION = "hoh-hub-cluster-subscription"
 	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
-	MULTICLUSTER_CHANNEL_NAME    = "multicluster-operators-channel"
 )
 
 func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {

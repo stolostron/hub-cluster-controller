@@ -13,16 +13,18 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const MULTICLUSTER_CHANNEL_NAME = "multicluster-operators-channel"
+
 func createChannelManagedClusterView(namespace string) *unstructured.Unstructured {
 
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "view.open-cluster-management.io/v1beta1",
 		"kind":       "ManagedClusterView",
-		"name":       "getdeployment",
+		"name":       MULTICLUSTER_CHANNEL_NAME,
 		"namespace":  namespace,
 		"spec": map[string]interface{}{
 			"scope": map[string]interface{}{
-				"name":      "multicluster-operators-channel",
+				"name":      MULTICLUSTER_CHANNEL_NAME,
 				"namespace": "open-cluster-management",
 				"resource":  "deployments",
 			},
@@ -44,7 +46,7 @@ func ApplyChannelManagedClusterView(ctx context.Context,
 		Get(ctx, MULTICLUSTER_CHANNEL_NAME, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating multicluster-operators-channel managedclusterviews in %s namespace", managedClusterName)
-		_, err := dynamicClient.Resource(crResource).
+		existingChannel, err = dynamicClient.Resource(crResource).
 			Create(ctx, desiredChannel, metav1.CreateOptions{})
 		if err != nil {
 			return nil, err
@@ -99,8 +101,5 @@ func isChannelReady(channel *unstructured.Unstructured) bool {
 	}
 
 	deploy := resultObj.(*appv1.Deployment)
-	if deploy.Status.ReadyReplicas == deploy.Status.Replicas {
-		return true
-	}
-	return false
+	return deploy.Status.ReadyReplicas == deploy.Status.Replicas
 }
