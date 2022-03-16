@@ -22,6 +22,7 @@ import (
 const (
 	hohHubClusterSubscription = "hoh-hub-cluster-subscription"
 	hohHubClusterMCH          = "hoh-hub-cluster-mch"
+	workPostponeDeleteAnnoKey = "open-cluster-management/postpone-delete"
 )
 
 func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
@@ -34,6 +35,14 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 			Namespace: namespace,
 			Labels: map[string]string{
 				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
+			Annotations: map[string]string{
+				// Add the postpone delete annotation for manifestwork so that the observabilityaddon can be
+				// cleaned up before the manifestwork is deleted by the managedcluster-import-controller when
+				// the corresponding managedcluster is detached.
+				// Note the annotation value is currently not taking effect, because managedcluster-import-controller
+				// managedcluster-import-controller hard code the value to be 10m
+				workPostponeDeleteAnnoKey: "",
 			},
 		},
 		Spec: workv1.ManifestWorkSpec{
@@ -381,6 +390,28 @@ func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 			Update(ctx, desiredMCH, metav1.UpdateOptions{})
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// removePostponeDeleteAnnotationForManifestwork removes the postpone delete annotation for manifestwork so that
+// the workagent can delete the manifestwork normally
+func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workclient workclientv1.WorkV1Interface,
+	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
+	_, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterMCH)
+	if errors.IsNotFound(err) {
+		subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterSubscription)
+		if err != nil {
+			return err
+		}
+		if subscription.GetAnnotations() != nil {
+			delete(subscription.GetAnnotations(), workPostponeDeleteAnnoKey)
+			_, err = workclient.ManifestWorks(managedClusterName).
+				Update(ctx, subscription, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

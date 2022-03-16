@@ -89,7 +89,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if !managedCluster.DeletionTimestamp.IsZero() {
 		// the managed cluster is deleting, we should not re-apply the manifestwork
 		// wait for managedcluster-import-controller to clean up the manifestwork
-		return nil
+		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workclient, c.workLister, managedClusterName)
 	}
 
 	subscription, err := ApplySubManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
