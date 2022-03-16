@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	HOH_HUB_CLUSTER_SUBSCRIPTION = "hoh-hub-cluster-subscription"
-	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
+	hohHubClusterSubscription = "hoh-hub-cluster-subscription"
+	hohHubClusterMCH          = "hoh-hub-cluster-mch"
+	workPostponeDeleteAnnoKey = "open-cluster-management/postpone-delete"
 )
 
 func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
@@ -30,10 +31,18 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION,
+			Name:      namespace + "-" + hohHubClusterSubscription,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
+			Annotations: map[string]string{
+				// Add the postpone delete annotation for manifestwork so that the observabilityaddon can be
+				// cleaned up before the manifestwork is deleted by the managedcluster-import-controller when
+				// the corresponding managedcluster is detached.
+				// Note the annotation value is currently not taking effect, because managedcluster-import-controller
+				// managedcluster-import-controller hard code the value to be 10m
+				workPostponeDeleteAnnoKey: "",
 			},
 		},
 		Spec: workv1.ManifestWorkSpec{
@@ -180,7 +189,7 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace + "-" + HOH_HUB_CLUSTER_MCH,
+			Name:      namespace + "-" + hohHubClusterMCH,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
@@ -291,7 +300,7 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		return nil, nil
 	}
 
-	subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION)
+	subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterSubscription)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating subscription manifestwork in %s namespace", managedClusterName)
 		_, err := workclient.ManifestWorks(managedClusterName).
@@ -358,7 +367,7 @@ func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 	if err != nil {
 		return err
 	}
-	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
+	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterMCH)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
 		_, err := workclient.ManifestWorks(managedClusterName).
@@ -381,6 +390,28 @@ func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 			Update(ctx, desiredMCH, metav1.UpdateOptions{})
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// removePostponeDeleteAnnotationForManifestwork removes the postpone delete annotation for manifestwork so that
+// the workagent can delete the manifestwork normally
+func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workclient workclientv1.WorkV1Interface,
+	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
+	_, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterMCH)
+	if errors.IsNotFound(err) {
+		subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterSubscription)
+		if err != nil {
+			return err
+		}
+		if subscription.GetAnnotations() != nil {
+			delete(subscription.GetAnnotations(), workPostponeDeleteAnnoKey)
+			_, err = workclient.ManifestWorks(managedClusterName).
+				Update(ctx, subscription, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

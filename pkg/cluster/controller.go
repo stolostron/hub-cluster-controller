@@ -69,8 +69,8 @@ func NewHubClusterController(
 					return false
 				}
 				// only enqueue when the hoh=enabled managed cluster is changed
-				if accessor.GetName() == accessor.GetNamespace()+"-"+HOH_HUB_CLUSTER_SUBSCRIPTION ||
-					accessor.GetName() == accessor.GetNamespace()+"-"+HOH_HUB_CLUSTER_MCH {
+				if accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterSubscription ||
+					accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterMCH {
 					return true
 				}
 				return false
@@ -82,15 +82,16 @@ func NewHubClusterController(
 func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	managedClusterName := syncCtx.QueueKey()
 	klog.V(2).Infof("Reconciling for %s", managedClusterName)
-	// managedCluster, err := c.clusterLister.Get(managedClusterName)
-	// if errors.IsNotFound(err) {
-	// 	// Spoke cluster not found, could have been deleted, delete manifestwork.
-	// 	// TODO: delete manifestwork
-	// 	return nil
-	// }
-	// if err != nil {
-	// 	return err
-	// }
+	managedCluster, err := c.clusterLister.Get(managedClusterName)
+	if err != nil {
+		return err
+	}
+	if !managedCluster.DeletionTimestamp.IsZero() {
+		// the managed cluster is deleting, we should not re-apply the manifestwork
+		// wait for managedcluster-import-controller to clean up the manifestwork
+		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workclient, c.workLister, managedClusterName)
+	}
+
 	subscription, err := ApplySubManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
 	if err != nil {
 		return err
