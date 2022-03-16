@@ -221,6 +221,45 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 								},
 							},
 						},
+						// ideally, the mch status should be in Running state.
+						// but due to this bug - https://github.com/stolostron/backlog/issues/20555
+						// the mch status can be in Installing for a long time.
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "application-chart-sub-status",
+									Path: ".status.components.application-chart-sub.status",
+								},
+							},
+						},
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "cluster-manager-cr-status",
+									Path: ".status.components.cluster-manager-cr.status",
+								},
+							},
+						},
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "multicluster-engine-status",
+									Path: ".status.components.multicluster-engine.status",
+								},
+							},
+						},
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "grc-sub-status",
+									Path: ".status.components.grc-sub.status",
+								},
+							},
+						},
 					},
 				},
 			},
