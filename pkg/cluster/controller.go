@@ -104,7 +104,11 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 					if err != nil {
 						return err
 					}
-					if isChannelReady(channel) {
+					isReady, err := isChannelReady(channel)
+					if err != nil {
+						return err
+					}
+					if isReady {
 						// apply mch manifestwork to install Hub once the multicluster-operators-channel is ready
 						err := ApplyMCHManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
 						if err != nil {

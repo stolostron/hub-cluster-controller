@@ -20,8 +20,10 @@ func createChannelManagedClusterView(namespace string) *unstructured.Unstructure
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "view.open-cluster-management.io/v1beta1",
 		"kind":       "ManagedClusterView",
-		"name":       MULTICLUSTER_CHANNEL_NAME,
-		"namespace":  namespace,
+		"metadata": map[string]interface{}{
+			"name":      MULTICLUSTER_CHANNEL_NAME,
+			"namespace": namespace,
+		},
 		"spec": map[string]interface{}{
 			"scope": map[string]interface{}{
 				"name":      MULTICLUSTER_CHANNEL_NAME,
@@ -47,6 +49,7 @@ func ApplyChannelManagedClusterView(ctx context.Context,
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating multicluster-operators-channel managedclusterviews in %s namespace", managedClusterName)
 		existingChannel, err = dynamicClient.Resource(crResource).
+			Namespace(managedClusterName).
 			Create(ctx, desiredChannel, metav1.CreateOptions{})
 		if err != nil {
 			return nil, err
@@ -62,6 +65,7 @@ func ApplyChannelManagedClusterView(ctx context.Context,
 	}
 	if updated {
 		existingChannel, err = dynamicClient.Resource(crResource).
+			Namespace(managedClusterName).
 			Update(ctx, desiredChannel, metav1.UpdateOptions{})
 		if err != nil {
 			return nil, err
@@ -87,19 +91,27 @@ func ensureManagedClusterView(existing, desired *unstructured.Unstructured) (boo
 	return false, nil
 }
 
-func isChannelReady(channel *unstructured.Unstructured) bool {
+func isChannelReady(channel *unstructured.Unstructured) (bool, error) {
 	if channel == nil {
-		return false
+		return false, nil
 	}
 	statusObj := channel.Object["status"]
 	if statusObj == nil {
-		return false
+		return false, nil
 	}
 	resultObj := statusObj.(map[string]interface{})["result"]
 	if resultObj == nil {
-		return false
+		return false, nil
 	}
 
-	deploy := resultObj.(*appv1.Deployment)
-	return deploy.Status.ReadyReplicas == deploy.Status.Replicas
+	jsonStr, err := json.Marshal(resultObj)
+	if err != nil {
+		return false, err
+	}
+	var deploy (*appv1.Deployment)
+	err = json.Unmarshal(jsonStr, &deploy)
+	if err != nil {
+		return false, err
+	}
+	return deploy.Status.ReadyReplicas == deploy.Status.Replicas, nil
 }
