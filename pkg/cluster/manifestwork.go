@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	HOH_HUB_CLUSTER_SUBSCRIPTION = "hoh-hub-cluster-subscription"
-	HOH_HUB_CLUSTER_MCH          = "hoh-hub-cluster-mch"
+	hohHubClusterSubscription = "hoh-hub-cluster-subscription"
+	hohHubClusterMCH          = "hoh-hub-cluster-mch"
 )
 
 func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
@@ -30,7 +30,7 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION,
+			Name:      namespace + "-" + hohHubClusterSubscription,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
@@ -180,7 +180,7 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 	}
 	return &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace + "-" + HOH_HUB_CLUSTER_MCH,
+			Name:      namespace + "-" + hohHubClusterMCH,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
@@ -291,7 +291,7 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		return nil, nil
 	}
 
-	subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_SUBSCRIPTION)
+	subscription, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterSubscription)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating subscription manifestwork in %s namespace", managedClusterName)
 		_, err := workclient.ManifestWorks(managedClusterName).
@@ -358,7 +358,7 @@ func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 	if err != nil {
 		return err
 	}
-	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + HOH_HUB_CLUSTER_MCH)
+	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterMCH)
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
 		_, err := workclient.ManifestWorks(managedClusterName).
