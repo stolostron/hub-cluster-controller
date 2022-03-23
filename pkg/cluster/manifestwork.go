@@ -74,7 +74,8 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 			],
 			"resources": [
 				"operatorgroups",
-				"subscriptions"
+				"subscriptions",
+				"catalogsources"
 			],
 			"verbs": [
 				"create",
