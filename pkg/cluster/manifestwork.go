@@ -187,7 +187,10 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 },
 "spec": {
 	"displayName": "Advanced Cluster Management",
-	"image": "%s",
+	"image": "quay.io/stolostron/acm-operator-bundle:%s",
+	"secrets": [
+      "multiclusterhub-operator-pull-secret"
+	],
 	"publisher": "Red Hat",
 	"sourceType": "grpc",
 	"updateStrategy": { 
