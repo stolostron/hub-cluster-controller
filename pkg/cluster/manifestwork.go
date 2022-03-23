@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -29,7 +30,18 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 	if p == nil || p.CurrentCSV == "" || p.DefaultChannel == "" {
 		return nil
 	}
-	return &workv1.ManifestWork{
+	currentCSV := p.CurrentCSV
+	channel := p.DefaultChannel
+	source := "redhat-operators"
+	// for test develop version
+	snapshot, _ := os.LookupEnv("SNAPSHOT")
+	if snapshot != "" {
+		channel = "release-2.5"
+		source = "acm-custom-registry"
+		currentCSV = "advanced-cluster-management.v2.5.0"
+	}
+
+	manifestwork := &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + hohHubClusterSubscription,
 			Namespace: namespace,
@@ -129,11 +141,11 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 		"channel": "%s",
 		"installPlanApproval": "Automatic",
 		"name": "advanced-cluster-management",
-		"source": "redhat-operators",
+		"source": "%s",
 		"sourceNamespace": "openshift-marketplace",
 		"startingCSV": "%s"
 	}
-}`, p.DefaultChannel, p.CurrentCSV)),
+}`, channel, source, currentCSV)),
 					}},
 				},
 			},
@@ -160,6 +172,34 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 			},
 		},
 	}
+
+	if snapshot != "" {
+		manifestwork.Spec.Workload.Manifests = append(manifestwork.Spec.Workload.Manifests,
+			workv1.Manifest{
+				RawExtension: runtime.RawExtension{
+					Raw: []byte(fmt.Sprintf(`{
+"apiVersion": "operators.coreos.com/v1alpha1",
+"kind": "CatalogSource",
+"metadata": {
+	"name": "%s",
+	"namespace": "openshift-marketplace"
+},
+"spec": {
+	"displayName": "Advanced Cluster Management",
+	"image": "%s",
+	"publisher": "Red Hat",
+	"sourceType": "grpc",
+	"updateStrategy": { 
+	  "registryPoll": {
+		"interval": "10m"
+	  }
+	}
+}
+}`, source, snapshot)),
+				}})
+	}
+
+	return manifestwork
 }
 
 func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWork, error) {
