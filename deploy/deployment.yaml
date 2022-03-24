@@ -23,6 +23,9 @@ spec:
           - "/hub-cluster-controller"
           - "controller"
           - "--v=2"
+        env:
+        - name: SNAPSHOT
+          value: "$SNAPSHOT"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
