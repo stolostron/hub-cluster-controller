@@ -176,8 +176,8 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 
 	if snapshot != "" {
 		manifestwork.Spec.Workload.Manifests = append(manifestwork.Spec.Workload.Manifests,
-			workv1.Manifest{
-				RawExtension: runtime.RawExtension{
+			[]workv1.Manifest{
+				{RawExtension: runtime.RawExtension{
 					Raw: []byte(fmt.Sprintf(`{
 "apiVersion": "operators.coreos.com/v1alpha1",
 "kind": "CatalogSource",
@@ -187,7 +187,7 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 },
 "spec": {
 	"displayName": "Advanced Cluster Management",
-	"image": "quay.io/stolostron/acm-operator-bundle:%s",
+	"image": "quay.io/stolostron/acm-custom-registry:%s",
 	"secrets": [
       "multiclusterhub-operator-pull-secret"
 	],
@@ -200,7 +200,29 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 	}
 }
 }`, source, snapshot)),
-				}})
+				}},
+				{RawExtension: runtime.RawExtension{
+					Raw: []byte(fmt.Sprintf(`{
+"apiVersion": "operators.coreos.com/v1alpha1",
+"kind": "CatalogSource",
+"metadata": {
+	"name": "%s",
+	"namespace": "openshift-marketplace"
+},
+"spec": {
+	"displayName": "MultiCluster Engine",
+	"image": "quay.io/stolostron/cmb-custom-registry:%s",
+	"publisher": "Red Hat",
+	"sourceType": "grpc",
+	"updateStrategy": { 
+	  "registryPoll": {
+		"interval": "10m"
+	  }
+	}
+}
+}`, "multiclusterengine-catalog", snapshot)),
+				}},
+			}...)
 	}
 
 	return manifestwork
@@ -218,6 +240,26 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 			"disableHubSelfManagement": true
 		}
 	}`
+
+	// for test develop version
+	snapshot, _ := os.LookupEnv("SNAPSHOT")
+	if snapshot != "" {
+		mchJson = `{
+			"apiVersion": "operator.open-cluster-management.io/v1",
+			"kind": "MultiClusterHub",
+			"metadata": {
+				"name": "multiclusterhub",
+				"namespace":"open-cluster-management",
+				"annotations": {
+					"installer.open-cluster-management.io/mce-subscription-spec": "{\"channel\": \"stable-2.0\",\"installPlanApproval\": \"Automatic\",\"name\": \"multicluster-engine\",\"source\": \"multiclusterengine-catalog\",\"sourceNamespace\": \"openshift-marketplace\"}"
+				}
+			},
+			"spec": {
+				"disableHubSelfManagement": true
+			}
+		}`
+	}
+
 	if userDefinedMCH != "" {
 		var mch interface{}
 		err := json.Unmarshal([]byte(userDefinedMCH), &mch)
@@ -277,15 +319,6 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 						// ideally, the mch status should be in Running state.
 						// but due to this bug - https://github.com/stolostron/backlog/issues/20555
 						// the mch status can be in Installing for a long time.
-						{
-							Type: workv1.JSONPathsType,
-							JsonPaths: []workv1.JsonPath{
-								{
-									Name: "application-chart-sub-status",
-									Path: ".status.components.application-chart-sub.status",
-								},
-							},
-						},
 						{
 							Type: workv1.JSONPathsType,
 							JsonPaths: []workv1.JsonPath{
