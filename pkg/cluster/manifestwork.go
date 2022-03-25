@@ -237,19 +237,7 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 			"namespace":"open-cluster-management"
 		},
 		"spec": {
-			"disableHubSelfManagement": true,
-			"overrides": {
-				"components":[
-					{
-						"name": "cluster-backup",
-						"enabled": false
-					},
-					{
-						"enabled": true,
-						"name": "search"
-					}
-				]
-			}
+			"disableHubSelfManagement": true
 		}
 	}`
 
@@ -267,7 +255,19 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 				}
 			},
 			"spec": {
-				"disableHubSelfManagement": true
+				"disableHubSelfManagement": true,
+				"overrides": {
+					"components":[
+						{
+							"name": "cluster-backup",
+							"enabled": false
+						},
+						{
+							"enabled": true,
+							"name": "search"
+						}
+					]
+				}
 			}
 		}`
 	}
