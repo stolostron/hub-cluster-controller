@@ -263,7 +263,7 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 							"enabled": false
 						},
 						{
-							"enabled": true,
+							"enabled": false,
 							"name": "search"
 						}
 					]
