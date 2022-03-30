@@ -255,7 +255,19 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 				}
 			},
 			"spec": {
-				"disableHubSelfManagement": true
+				"disableHubSelfManagement": true,
+				"overrides": {
+					"components":[
+						{
+							"name": "cluster-backup",
+							"enabled": false
+						},
+						{
+							"enabled": false,
+							"name": "search"
+						}
+					]
+				}
 			}
 		}`
 	}
