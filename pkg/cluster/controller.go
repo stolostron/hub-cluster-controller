@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	clusterinformerv1 "open-cluster-management.io/api/client/cluster/informers/externalversions/cluster/v1"
@@ -20,7 +21,8 @@ import (
 
 // clusterController reconciles instances of ManagedCluster on the hub.
 type clusterController struct {
-	workclient    workclientv1.WorkV1Interface
+	kubeClient    *kubernetes.Clientset
+	workClient    workclientv1.WorkV1Interface
 	clusterLister clusterlisterv1.ManagedClusterLister
 	workLister    worklisterv1.ManifestWorkLister
 	cache         resourceapply.ResourceCache
@@ -29,12 +31,14 @@ type clusterController struct {
 
 // NewHubClusterController creates a new hub cluster controller
 func NewHubClusterController(
-	workclient workclientv1.WorkV1Interface,
+	kubeClient *kubernetes.Clientset,
+	workClient workclientv1.WorkV1Interface,
 	clusterInformer clusterinformerv1.ManagedClusterInformer,
 	workInformer workinformerv1.ManifestWorkInformer,
 	recorder events.Recorder) factory.Controller {
 	c := &clusterController{
-		workclient:    workclient,
+		kubeClient:    kubeClient,
+		workClient:    workClient,
 		clusterLister: clusterInformer.Lister(),
 		workLister:    workInformer.Lister(),
 		cache:         resourceapply.NewResourceCache(),
@@ -89,10 +93,10 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if !managedCluster.DeletionTimestamp.IsZero() {
 		// the managed cluster is deleting, we should not re-apply the manifestwork
 		// wait for managedcluster-import-controller to clean up the manifestwork
-		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workclient, c.workLister, managedClusterName)
+		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workClient, c.workLister, managedClusterName)
 	}
 
-	subscription, err := ApplySubManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
+	subscription, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
 	if err != nil {
 		return err
 	}
@@ -107,7 +111,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			for _, value := range conditions.StatusFeedbacks.Values {
 				if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
 					//fetch user defined mch from annotation
-					err := ApplyMCHManifestWorks(ctx, c.workclient, c.workLister, managedClusterName)
+					err := ApplyMCHManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
 					if err != nil {
 						return err
 					}

@@ -17,7 +17,7 @@ func TestCreateMCHManifestwork(t *testing.T) {
 		"spec": {
 			"imagePullSecret": "multiclusterhub-operator-pull-secret"
 		}
-	}`)
+	}`, nil)
 	if mch.GetName() != "test-"+hohHubClusterMCH {
 		t.Fatalf("failed to find the %s manifestwork", "test-"+hohHubClusterMCH)
 	}

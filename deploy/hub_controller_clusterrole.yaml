@@ -15,7 +15,7 @@ rules:
   verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
 # Allow hub to get/list/watch/create/delete configmap, namespace and service account
 - apiGroups: [""]
-  resources: ["namespaces", "serviceaccounts", "configmaps", "events"]
+  resources: ["namespaces", "serviceaccounts", "configmaps", "events", "secrets"]
   verbs: ["get", "list", "watch", "create", "delete", "update"]
 # allow hub to get packagemanifest to fetch the defaultChannel and currentCSV
 - apiGroups: ["packages.operators.coreos.com"]

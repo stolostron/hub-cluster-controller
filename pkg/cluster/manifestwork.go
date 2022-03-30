@@ -8,9 +8,11 @@ import (
 	"strings"
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
@@ -21,20 +23,166 @@ import (
 )
 
 const (
-	hohHubClusterSubscription = "hoh-hub-cluster-subscription"
-	hohHubClusterMCH          = "hoh-hub-cluster-mch"
-	workPostponeDeleteAnnoKey = "open-cluster-management/postpone-delete"
+	hohHubClusterSubscription     = "hoh-hub-cluster-subscription"
+	hohHubClusterMCH              = "hoh-hub-cluster-mch"
+	workPostponeDeleteAnnoKey     = "open-cluster-management/postpone-delete"
+	defaultInstallNamespace       = "open-cluster-management"
+	openshiftMarketPlaceNamespace = "openshift-marketplace"
 )
 
-func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest) *workv1.ManifestWork {
+var podNamespace, snapshot, imagePullSecretName string
+
+func init() {
+	// for test develop version
+	snapshot, _ = os.LookupEnv("SNAPSHOT")
+	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
+	podNamespace, _ = os.LookupEnv("POD_NAMESPACE")
+}
+
+func getClusterRoleRaw() []byte {
+	return []byte(`{
+	"apiVersion": "rbac.authorization.k8s.io/v1",
+	"kind": "ClusterRole",
+	"metadata": {
+		"name": "open-cluster-management:hub-cluster-controller"
+	},
+	"rules": [
+		{
+			"apiGroups": [
+				"operators.coreos.com"
+			],
+			"resources": [
+				"operatorgroups",
+				"subscriptions",
+				"catalogsources"
+			],
+			"verbs": [
+				"create",
+				"update"
+			]
+		}
+	]}`)
+}
+
+func getClusterRoleBindingRaw() []byte {
+	return []byte(`{
+	"apiVersion": "rbac.authorization.k8s.io/v1",
+	"kind": "ClusterRoleBinding",
+	"metadata": {
+		"name": "open-cluster-management-agent:klusterlet-work-sa"
+	},
+	"roleRef": {
+		"apiGroup": "rbac.authorization.k8s.io",
+		"kind": "ClusterRole",
+		"name": "open-cluster-management:hub-cluster-controller"
+	},
+	"subjects": [
+		{
+			"kind": "ServiceAccount",
+			"name": "klusterlet-work-sa",
+			"namespace": "open-cluster-management-agent"
+		}
+	]}`)
+}
+
+func getNamespaceRaw() []byte {
+	return []byte(fmt.Sprintf(`{
+	"apiVersion": "v1",
+	"kind": "Namespace",
+	"metadata": {
+		"name": "%s"
+	}}`, defaultInstallNamespace))
+}
+
+func getACMOperatorGroupRaw() []byte {
+	return []byte(fmt.Sprintf(`{
+		"apiVersion": "operators.coreos.com/v1",
+		"kind": "OperatorGroup",
+		"metadata": {
+			"name": "open-cluster-management-group",
+			"namespace": "%s"
+		},
+		"spec": {
+			"targetNamespaces": [
+				"%s"
+			]
+		}
+	}`, defaultInstallNamespace, defaultInstallNamespace))
+}
+
+func getACMSubscription(channel, source, currentCSV string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"apiVersion": "operators.coreos.com/v1alpha1",
+		"kind": "Subscription",
+		"metadata": {
+			"name": "acm-operator-subscription",
+			"namespace": "%s"
+		},
+		"spec": {
+			"channel": "%s",
+			"installPlanApproval": "Automatic",
+			"name": "advanced-cluster-management",
+			"source": "%s",
+			"sourceNamespace": "%s",
+			"startingCSV": "%s"
+		}
+	}`, defaultInstallNamespace, channel, source, openshiftMarketPlaceNamespace, currentCSV))
+}
+
+func getACMCatalogSource(source, snapshot, imagePullSecretName string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"apiVersion": "operators.coreos.com/v1alpha1",
+		"kind": "CatalogSource",
+		"metadata": {
+			"name": "%s",
+			"namespace": "%s"
+		},
+		"spec": {
+			"displayName": "Advanced Cluster Management",
+			"image": "quay.io/stolostron/acm-custom-registry:%s",
+			"secrets": [
+			  "%s"
+			],
+			"publisher": "Red Hat",
+			"sourceType": "grpc",
+			"updateStrategy": { 
+			  "registryPoll": {
+				"interval": "10m"
+			  }
+			}
+		}
+		}`, source, openshiftMarketPlaceNamespace, snapshot, imagePullSecretName))
+}
+
+func getMCECatalogSource(name, snapshot string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"apiVersion": "operators.coreos.com/v1alpha1",
+		"kind": "CatalogSource",
+		"metadata": {
+			"name": "%s",
+			"namespace": "%s"
+		},
+		"spec": {
+			"displayName": "MultiCluster Engine",
+			"image": "quay.io/stolostron/cmb-custom-registry:%s",
+			"publisher": "Red Hat",
+			"sourceType": "grpc",
+			"updateStrategy": { 
+			  "registryPoll": {
+				"interval": "10m"
+			  }
+			}
+		}
+		}`, "multiclusterengine-catalog", openshiftMarketPlaceNamespace, snapshot))
+}
+
+func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest, imagePullSecret *corev1.Secret) *workv1.ManifestWork {
 	if p == nil || p.CurrentCSV == "" || p.DefaultChannel == "" {
 		return nil
 	}
 	currentCSV := p.CurrentCSV
 	channel := p.DefaultChannel
 	source := "redhat-operators"
-	// for test develop version
-	snapshot, _ := os.LookupEnv("SNAPSHOT")
 	if snapshot != "" {
 		channel = "release-2.5"
 		source = "acm-custom-registry"
@@ -61,94 +209,24 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 			Workload: workv1.ManifestsTemplate{
 				Manifests: []workv1.Manifest{
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
-	"apiVersion": "rbac.authorization.k8s.io/v1",
-	"kind": "ClusterRole",
-	"metadata": {
-		"name": "open-cluster-management:hub-cluster-controller"
-	},
-	"rules": [
-		{
-			"apiGroups": [
-				"operators.coreos.com"
-			],
-			"resources": [
-				"operatorgroups",
-				"subscriptions",
-				"catalogsources"
-			],
-			"verbs": [
-				"create",
-				"update"
-			]
-		}
-	]
-}`),
+						Raw: getClusterRoleRaw(),
 					}},
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
-	"apiVersion": "rbac.authorization.k8s.io/v1",
-	"kind": "ClusterRoleBinding",
-	"metadata": {
-		"name": "open-cluster-management-agent:klusterlet-work-sa"
-	},
-	"roleRef": {
-		"apiGroup": "rbac.authorization.k8s.io",
-		"kind": "ClusterRole",
-		"name": "open-cluster-management:hub-cluster-controller"
-	},
-	"subjects": [
-		{
-			"kind": "ServiceAccount",
-			"name": "klusterlet-work-sa",
-			"namespace": "open-cluster-management-agent"
-		}
-	]
-}`),
+						Raw: getClusterRoleBindingRaw(),
 					}},
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
-	"apiVersion": "v1",
-	"kind": "Namespace",
-	"metadata": {
-		"name": "open-cluster-management"
-	}
-}`),
+						Raw: getNamespaceRaw(),
 					}},
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(`{
-	"apiVersion": "operators.coreos.com/v1",
-	"kind": "OperatorGroup",
-	"metadata": {
-		"name": "open-cluster-management-group",
-		"namespace": "open-cluster-management"
-	},
-	"spec": {
-		"targetNamespaces": [
-			"open-cluster-management"
-		]
-	}
-}`),
+						Raw: getACMOperatorGroupRaw(),
 					}},
 					{RawExtension: runtime.RawExtension{
-						Raw: []byte(fmt.Sprintf(`{
-	"apiVersion": "operators.coreos.com/v1alpha1",
-	"kind": "Subscription",
-	"metadata": {
-		"name": "acm-operator-subscription",
-		"namespace": "open-cluster-management"
-	},
-	"spec": {
-		"channel": "%s",
-		"installPlanApproval": "Automatic",
-		"name": "advanced-cluster-management",
-		"source": "%s",
-		"sourceNamespace": "openshift-marketplace",
-		"startingCSV": "%s"
-	}
-}`, channel, source, currentCSV)),
+						Raw: getACMSubscription(channel, source, currentCSV),
 					}},
 				},
+			},
+			DeleteOption: &workv1.DeleteOption{
+				PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
 			},
 			ManifestConfigs: []workv1.ManifestConfigOption{
 				{
@@ -156,7 +234,7 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 						Group:     "operators.coreos.com",
 						Resource:  "subscriptions",
 						Name:      "acm-operator-subscription",
-						Namespace: "open-cluster-management",
+						Namespace: defaultInstallNamespace,
 					},
 					FeedbackRules: []workv1.FeedbackRule{
 						{
@@ -178,100 +256,60 @@ func createSubManifestwork(namespace string, p *packagemanifest.PackageManifest)
 		manifestwork.Spec.Workload.Manifests = append(manifestwork.Spec.Workload.Manifests,
 			[]workv1.Manifest{
 				{RawExtension: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{
-"apiVersion": "operators.coreos.com/v1alpha1",
-"kind": "CatalogSource",
-"metadata": {
-	"name": "%s",
-	"namespace": "openshift-marketplace"
-},
-"spec": {
-	"displayName": "Advanced Cluster Management",
-	"image": "quay.io/stolostron/acm-custom-registry:%s",
-	"secrets": [
-      "multiclusterhub-operator-pull-secret"
-	],
-	"publisher": "Red Hat",
-	"sourceType": "grpc",
-	"updateStrategy": { 
-	  "registryPoll": {
-		"interval": "10m"
-	  }
-	}
-}
-}`, source, snapshot)),
+					Raw: getACMCatalogSource(source, snapshot, imagePullSecretName),
 				}},
 				{RawExtension: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{
-"apiVersion": "operators.coreos.com/v1alpha1",
-"kind": "CatalogSource",
-"metadata": {
-	"name": "%s",
-	"namespace": "openshift-marketplace"
-},
-"spec": {
-	"displayName": "MultiCluster Engine",
-	"image": "quay.io/stolostron/cmb-custom-registry:%s",
-	"publisher": "Red Hat",
-	"sourceType": "grpc",
-	"updateStrategy": { 
-	  "registryPoll": {
-		"interval": "10m"
-	  }
-	}
-}
-}`, "multiclusterengine-catalog", snapshot)),
+					Raw: getMCECatalogSource("multiclusterengine-catalog", snapshot),
 				}},
 			}...)
+	}
+
+	if imagePullSecret != nil {
+		manifestwork.Spec.Workload.Manifests = append(manifestwork.Spec.Workload.Manifests,
+			workv1.Manifest{
+				RawExtension: runtime.RawExtension{
+					Object: imagePullSecret,
+				},
+			})
 	}
 
 	return manifestwork
 }
 
-func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWork, error) {
-	mchJson := `{
-		"apiVersion": "operator.open-cluster-management.io/v1",
-		"kind": "MultiClusterHub",
-		"metadata": {
-			"name": "multiclusterhub",
-			"namespace":"open-cluster-management"
-		},
-		"spec": {
-			"disableHubSelfManagement": true
-		}
-	}`
-
-	// for test develop version
-	snapshot, _ := os.LookupEnv("SNAPSHOT")
+func getDefaultMCH() string {
 	if snapshot != "" {
-		mchJson = `{
+		return fmt.Sprintf(`{
 			"apiVersion": "operator.open-cluster-management.io/v1",
 			"kind": "MultiClusterHub",
 			"metadata": {
 				"name": "multiclusterhub",
-				"namespace":"open-cluster-management",
+				"namespace": "%s",
 				"annotations": {
 					"installer.open-cluster-management.io/mce-subscription-spec": "{\"channel\": \"stable-2.0\",\"installPlanApproval\": \"Automatic\",\"name\": \"multicluster-engine\",\"source\": \"multiclusterengine-catalog\",\"sourceNamespace\": \"openshift-marketplace\"}"
 				}
 			},
 			"spec": {
 				"disableHubSelfManagement": true,
-				"overrides": {
-					"components":[
-						{
-							"name": "cluster-backup",
-							"enabled": false
-						},
-						{
-							"enabled": false,
-							"name": "search"
-						}
-					]
-				}
+				"imagePullSecret": "%s"
 			}
-		}`
+		}`, defaultInstallNamespace, imagePullSecretName)
 	}
+	return fmt.Sprintf(`{
+		"apiVersion": "operator.open-cluster-management.io/v1",
+		"kind": "MultiClusterHub",
+		"metadata": {
+			"name": "multiclusterhub",
+			"namespace": "%s"
+		},
+		"spec": {
+			"disableHubSelfManagement": true
+		}
+	}`, defaultInstallNamespace)
+}
 
+func createMCHManifestwork(namespace, userDefinedMCH string, imagePullSecret *corev1.Secret) (*workv1.ManifestWork, error) {
+
+	mchJson := getDefaultMCH()
 	if userDefinedMCH != "" {
 		var mch interface{}
 		err := json.Unmarshal([]byte(userDefinedMCH), &mch)
@@ -285,7 +323,7 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 		}
 		mchJson = string(mchBytes)
 	}
-	return &workv1.ManifestWork{
+	manifestwork := &workv1.ManifestWork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      namespace + "-" + hohHubClusterMCH,
 			Namespace: namespace,
@@ -301,13 +339,16 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 					}},
 				},
 			},
+			DeleteOption: &workv1.DeleteOption{
+				PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+			},
 			ManifestConfigs: []workv1.ManifestConfigOption{
 				{
 					ResourceIdentifier: workv1.ResourceIdentifier{
 						Group:     "operator.open-cluster-management.io",
 						Resource:  "multiclusterhubs",
 						Name:      "multiclusterhub",
-						Namespace: "open-cluster-management",
+						Namespace: defaultInstallNamespace,
 					},
 					FeedbackRules: []workv1.FeedbackRule{
 						{
@@ -362,7 +403,18 @@ func createMCHManifestwork(namespace, userDefinedMCH string) (*workv1.ManifestWo
 				},
 			},
 		},
-	}, nil
+	}
+
+	if imagePullSecret != nil {
+		manifestwork.Spec.Workload.Manifests = append(manifestwork.Spec.Workload.Manifests,
+			workv1.Manifest{
+				RawExtension: runtime.RawExtension{
+					Object: imagePullSecret,
+				},
+			})
+	}
+
+	return manifestwork, nil
 }
 
 func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
@@ -381,10 +433,43 @@ func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
 	return false, nil
 }
 
-func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface,
+// generatePullSecret generates the image pull secret for mco
+func generatePullSecret(kubeClient *kubernetes.Clientset, namespace string) (*corev1.Secret, error) {
+	if imagePullSecretName != "" {
+		imagePullSecret, err := kubeClient.CoreV1().Secrets(podNamespace).Get(context.TODO(),
+			imagePullSecretName, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &corev1.Secret{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: corev1.SchemeGroupVersion.String(),
+				Kind:       "Secret",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      imagePullSecret.Name,
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{
+				".dockerconfigjson": imagePullSecret.Data[".dockerconfigjson"],
+			},
+			Type: corev1.SecretTypeDockerConfigJson,
+		}, nil
+	}
+	return nil, nil
+}
+
+func ApplySubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface,
 	workLister worklisterv1.ManifestWorkLister, managedClusterName string) (*workv1.ManifestWork, error) {
 
-	desiredSubscription := createSubManifestwork(managedClusterName, packagemanifest.GetPackageManifest())
+	// Get image pull secret for pre-release testing
+	// search components and catalogsource image need have pull secret
+	imagePullSecret, err := generatePullSecret(kubeClient, openshiftMarketPlaceNamespace)
+	if err != nil {
+		return nil, err
+	}
+
+	desiredSubscription := createSubManifestwork(managedClusterName, packagemanifest.GetPackageManifest(), imagePullSecret)
 	if desiredSubscription == nil {
 		return nil, nil
 	}
@@ -410,7 +495,7 @@ func ApplySubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		return nil, err
 	}
 	klog.V(2).Infof("the existing packagemanifest is %+v for managedcluster %s", p, managedClusterName)
-	desiredSubscription = createSubManifestwork(managedClusterName, p)
+	desiredSubscription = createSubManifestwork(managedClusterName, p, imagePullSecret)
 
 	updated, err := EnsureManifestWork(subscription, desiredSubscription)
 	if err != nil {
@@ -444,15 +529,23 @@ func getExistingPackageManifestInfo(subManifest *workv1.ManifestWork) (*packagem
 	return nil, nil
 }
 
-func ApplyMCHManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface,
+func ApplyMCHManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface,
 	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
 	userDefinedMCH := ""
 	// Do not need to support customization so far
 	// if managedCluster.Annotations != nil {
 	// 	userDefinedMCH = managedCluster.Annotations["mch"]
 	// }
+	// Get image pull secret for pre-release testing
+	// search components and catalogsource image need have pull secret
+	// Get image pull secret for pre-release testing
+	// search components and catalogsource image need have pull secret
+	imagePullSecret, err := generatePullSecret(kubeClient, defaultInstallNamespace)
+	if err != nil {
+		return err
+	}
 
-	desiredMCH, err := createMCHManifestwork(managedClusterName, userDefinedMCH)
+	desiredMCH, err := createMCHManifestwork(managedClusterName, userDefinedMCH, imagePullSecret)
 	if err != nil {
 		return err
 	}
