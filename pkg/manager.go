@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	clusterv1client "open-cluster-management.io/api/client/cluster/clientset/versioned"
 	clusterv1informers "open-cluster-management.io/api/client/cluster/informers/externalversions"
@@ -43,6 +44,12 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 		kubeConfig.Burst = 200
 	}
 
+	// Build kubclient client and informer for managed cluster
+	kubeClient, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+
 	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
 	if err != nil {
 		return err
@@ -71,6 +78,7 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 	)
 
 	hubClusterController := cluster.NewHubClusterController(
+		kubeClient,
 		workClient.WorkV1(),
 		clusterInformers.Cluster().V1().ManagedClusters(),
 		workInformers.Work().V1().ManifestWorks(),
