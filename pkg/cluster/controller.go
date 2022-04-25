@@ -56,7 +56,8 @@ func NewHubClusterController(
 					return false
 				}
 				// enqueue all managed cluster except for local-cluster and hoh=disabled
-				if accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
+				if accessor.GetLabels()["vendor"] != "OpenShift" ||
+					accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
 					return false
 				} else {
 					return true
