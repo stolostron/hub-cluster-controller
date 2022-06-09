@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -56,8 +57,9 @@ func NewHubClusterController(
 					return false
 				}
 				// enqueue all managed cluster except for local-cluster and hoh=disabled
-				if accessor.GetLabels()["vendor"] != "OpenShift" ||
-					accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
+				// for hypershift hosted cluster, there is no vendor label.
+				// TODO: also need to filter the *KS
+				if accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
 					return false
 				} else {
 					return true
@@ -91,35 +93,54 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if err != nil {
 		return err
 	}
+
+	hostingClusterName := ""
+	annotations := managedCluster.GetAnnotations()
+	if val, ok := annotations["import.open-cluster-management.io/klusterlet-deploy-mode"]; ok && val == "Hosted" {
+		hostingClusterName, ok = annotations["import.open-cluster-management.io/hosting-cluster-name"]
+		if !ok || hostingClusterName == "" {
+			return fmt.Errorf("missing hosting-cluster-name in managed cluster.")
+		}
+	}
+
 	if !managedCluster.DeletionTimestamp.IsZero() {
 		// the managed cluster is deleting, we should not re-apply the manifestwork
 		// wait for managedcluster-import-controller to clean up the manifestwork
 		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workClient, c.workLister, managedClusterName)
 	}
 
-	subscription, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
-	if err != nil {
-		return err
-	}
+	if hostingClusterName == "" { // for non-hypershift hosted leaf hub
+		subscription, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
+		if err != nil {
+			return err
+		}
 
-	if subscription == nil {
-		syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
-		return nil
-	}
-	// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
-	for _, conditions := range subscription.Status.ResourceStatus.Manifests {
-		if conditions.ResourceMeta.Kind == "Subscription" {
-			for _, value := range conditions.StatusFeedbacks.Values {
-				if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
-					//fetch user defined mch from annotation
-					err := ApplyMCHManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
-					if err != nil {
-						return err
+		if subscription == nil {
+			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
+			return nil
+		}
+		// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
+		for _, conditions := range subscription.Status.ResourceStatus.Manifests {
+			if conditions.ResourceMeta.Kind == "Subscription" {
+				for _, value := range conditions.StatusFeedbacks.Values {
+					if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
+						//fetch user defined mch from annotation
+						err := ApplyMCHManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
+						if err != nil {
+							return err
+						}
+						return nil
 					}
-					return nil
 				}
 			}
 		}
+	} else { // for hypershift hosted leaf hub
+		if err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName); err != nil {
+			return err
+		}
+
+		return nil
 	}
+
 	return nil
 }

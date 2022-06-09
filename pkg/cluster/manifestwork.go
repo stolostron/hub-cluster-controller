@@ -1,11 +1,15 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
+	"text/template"
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -22,6 +26,9 @@ import (
 
 	"github.com/stolostron/hub-cluster-controller/pkg/packagemanifest"
 )
+
+//go:embed manifests/hypershift
+var manifestFS embed.FS
 
 const (
 	hohHubClusterSubscription     = "hoh-hub-cluster-subscription"
@@ -631,4 +638,68 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 		}
 	}
 	return nil
+}
+
+func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface,
+	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
+	tpl, err := parseTemplates(manifestFS)
+	if err != nil {
+		return err
+	}
+
+	klog.V(2).Infof("rendering templates for app on hosted cluster")
+	var buf bytes.Buffer
+	appHostedConfigValues := struct{}{}
+	tpl.ExecuteTemplate(&buf, "manifests/hypershift/app/hosted", appHostedConfigValues)
+	klog.V(2).Infof("rendering templates for app on hosted cluster: %s", buf.Bytes())
+
+	return nil
+}
+
+func parseTemplates(manifestFS embed.FS) (*template.Template, error) {
+	tpl := template.New("")
+	err := fs.WalkDir(manifestFS, ".", func(file string, d fs.DirEntry, err1 error) error {
+		if d.IsDir() && (strings.HasSuffix(file, "hosted") || strings.HasSuffix(file, "management")) {
+			if err1 != nil {
+				return err1
+			}
+
+			klog.V(2).Infof("parseTemplates =====" + file)
+			manifests, err2 := readFileInDir(manifestFS, file)
+			if err2 != nil {
+				return err2
+			}
+
+			t := tpl.New(file)
+			_, err3 := t.Parse(manifests)
+			if err3 != nil {
+				return err3
+			}
+		}
+
+		return nil
+	})
+
+	return tpl, err
+}
+
+func readFileInDir(manifestFS embed.FS, dir string) (string, error) {
+	var res string
+	err := fs.WalkDir(manifestFS, dir, func(file string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		klog.V(2).Infof("readFileInDir =====" + file)
+		if !d.IsDir() {
+			b, err := manifestFS.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			res += string(b) + "\n---\n"
+		}
+		return nil
+	})
+
+	return res, err
 }
