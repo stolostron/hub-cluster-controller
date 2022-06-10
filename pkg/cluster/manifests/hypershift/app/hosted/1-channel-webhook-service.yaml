@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: channels-apps-open-cluster-management-webhook-svc
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 spec:
   ports:
   - port: 443
@@ -18,7 +18,7 @@ kind: Endpoints
 apiVersion: v1
 metadata:
   name: channels-apps-open-cluster-management-webhook-svc
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 subsets:
   - addresses:
       - ip: <CHANNEL_CLUSTER_IP>

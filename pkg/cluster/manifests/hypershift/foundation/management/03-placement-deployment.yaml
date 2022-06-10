@@ -2,7 +2,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: clustermanager-placement-controller
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
   labels:
     app: clustermanager-controller
 spec:
@@ -39,7 +39,7 @@ spec:
       serviceAccountName: default
       containers:
       - name: placement-controller
-        image: <PLACEMENT>
+        image: quay.io/stolostron/placement:{{ .MCESnapshot }}
         args:
           - "/placement"
           - "controller"

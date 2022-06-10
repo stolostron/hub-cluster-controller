@@ -2,7 +2,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: hub-registration-controller
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
   labels:
     app: hub-registration-controller
 spec:
@@ -18,7 +18,7 @@ spec:
       serviceAccountName: default
       containers:
       - name: hub-controller
-        image: <HUB_REGISTRATION>
+        image: quay.io/stolostron/registration:{{ .MCESnapshot }}
         imagePullPolicy: IfNotPresent
         args:
           - "/registration"

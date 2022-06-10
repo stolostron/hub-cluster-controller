@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: multicluster-operators-hub-subscription
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
   labels:
     app: multicluster-operators-hub-subscription
 spec:
@@ -18,7 +18,7 @@ spec:
       serviceAccountName: multicluster-operators
       containers:
         - name: multicluster-operators-hub-subscription
-          image: <SUBSCRIPTION>
+          image: quay.io/stolostron/multicluster-operators-subscription:{{ .Snapshot }}
           volumeMounts:
           - mountPath: /var/run/secrets/hypershift
             name: kubeconfig
@@ -29,7 +29,7 @@ spec:
           - /usr/local/bin/multicluster-operators-subscription
           - --alsologtostderr
           - --kubeconfig=/var/run/secrets/hypershift/kubeconfig
-          - --agent-image=<SUBSCRIPTION>
+          - --agent-image=quay.io/stolostron/multicluster-operators-subscription:{{ .Snapshot }}
           - --debug=true
           - --v=1
           imagePullPolicy: Always

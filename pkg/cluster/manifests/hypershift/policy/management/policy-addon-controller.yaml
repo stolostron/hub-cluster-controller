@@ -4,7 +4,7 @@ metadata:
   labels:
     app: governance-policy-addon-controller
   name: policy-addon-ctrl-controller-manager
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -274,7 +274,7 @@ metadata:
   labels:
     app: governance-policy-addon-controller
   name: policy-addon-ctrl-leader-election-rolebinding
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -282,7 +282,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: policy-addon-ctrl-controller-manager
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -297,7 +297,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: policy-addon-ctrl-controller-manager
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 ---
 apiVersion: v1
 data:
@@ -326,7 +326,7 @@ metadata:
     app: governance-policy-addon-controller
     control-plane: controller-manager
   name: policy-addon-ctrl-controller-manager
-  namespace: <HOSTED_CLUSTER>
+  namespace: {{ .HostedClusterName }}
 spec:
   replicas: 1
   selector:
@@ -364,7 +364,7 @@ spec:
           value: quay.io/stolostron/governance-policy-status-sync:latest
         - name: GOVERNANCE_POLICY_TEMPLATE_SYNC_IMAGE
           value: quay.io/stolostron/governance-policy-template-sync:latest
-        image: <POLICY_ADDON>
+        image: quay.io/stolostron/governance-policy-addon-controller:{{ .Snapshot }}
         imagePullPolicy: IfNotPresent
         name: manager
         resources:

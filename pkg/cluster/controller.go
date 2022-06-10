@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -94,13 +95,22 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return err
 	}
 
-	hostingClusterName := ""
+	hostingClusterName, hostedClusterName := "", ""
 	annotations := managedCluster.GetAnnotations()
 	if val, ok := annotations["import.open-cluster-management.io/klusterlet-deploy-mode"]; ok && val == "Hosted" {
 		hostingClusterName, ok = annotations["import.open-cluster-management.io/hosting-cluster-name"]
 		if !ok || hostingClusterName == "" {
 			return fmt.Errorf("missing hosting-cluster-name in managed cluster.")
 		}
+		hypershiftdeploymentName, ok := annotations["cluster.open-cluster-management.io/hypershiftdeployment"]
+		if !ok || hypershiftdeploymentName == "" {
+			return fmt.Errorf("missing hypershiftdeployment name in managed cluster.")
+		}
+		splits := strings.Split(hypershiftdeploymentName, "/")
+		if len(splits) != 2 || splits[1] == "" {
+			return fmt.Errorf("bad hypershiftdeployment name in managed cluster.")
+		}
+		hostedClusterName = splits[1]
 	}
 
 	if !managedCluster.DeletionTimestamp.IsZero() {
@@ -135,7 +145,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			}
 		}
 	} else { // for hypershift hosted leaf hub
-		if err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName); err != nil {
+		if err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName); err != nil {
 			return err
 		}
 

@@ -1,11 +1,13 @@
 package cluster
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -30,6 +33,16 @@ import (
 //go:embed manifests/hypershift
 var manifestFS embed.FS
 
+var hubComponents = map[string]bool{
+	"app":           true,
+	"foundation":    true,
+	"hive":          false,
+	"observability": false,
+	"policy":        true,
+}
+
+const manifestwork_max_size = 50 * 1024
+
 const (
 	hohHubClusterSubscription     = "hoh-hub-cluster-subscription"
 	hohHubClusterMCH              = "hoh-hub-cluster-mch"
@@ -38,11 +51,12 @@ const (
 	openshiftMarketPlaceNamespace = "openshift-marketplace"
 )
 
-var podNamespace, snapshot, imagePullSecretName string
+var podNamespace, snapshot, mceSnapshot, imagePullSecretName string
 
 func init() {
 	// for test develop version
 	snapshot, _ = os.LookupEnv("SNAPSHOT")
+	mceSnapshot, _ = os.LookupEnv("MCE_SNAPSHOT")
 	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
 	podNamespace, _ = os.LookupEnv("POD_NAMESPACE")
 }
@@ -153,7 +167,7 @@ func getACMCatalogSource(source, snapshot, imagePullSecretName string) []byte {
 			],
 			"publisher": "Red Hat",
 			"sourceType": "grpc",
-			"updateStrategy": { 
+			"updateStrategy": {
 			  "registryPoll": {
 				"interval": "10m"
 			  }
@@ -175,7 +189,7 @@ func getMCECatalogSource(name, snapshot string) []byte {
 			"image": "quay.io/stolostron/cmb-custom-registry:%s",
 			"publisher": "Red Hat",
 			"sourceType": "grpc",
-			"updateStrategy": { 
+			"updateStrategy": {
 			  "registryPoll": {
 				"interval": "10m"
 			  }
@@ -519,7 +533,6 @@ func ApplySubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		if err != nil {
 			return nil, err
 		}
-
 		return desiredSubscription, nil
 	}
 	if err != nil {
@@ -588,33 +601,40 @@ func ApplyMCHManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 	if err != nil {
 		return err
 	}
-	mch, err := workLister.ManifestWorks(managedClusterName).Get(managedClusterName + "-" + hohHubClusterMCH)
+
+	return applyManifestWork(ctx, workclient, workLister, desiredMCH)
+}
+
+// applyManifestWork creates or updates a single manifestwork resource
+func applyManifestWork(ctx context.Context, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
+	manifestWork *workv1.ManifestWork) error {
+	existingManifestWork, err := workLister.ManifestWorks(manifestWork.GetNamespace()).Get(manifestWork.GetName())
 	if errors.IsNotFound(err) {
-		klog.V(2).Infof("creating mch manifestwork in %s namespace", managedClusterName)
-		_, err := workclient.ManifestWorks(managedClusterName).
-			Create(ctx, desiredMCH, metav1.CreateOptions{})
+		klog.V(2).Infof("creating manifestwork %s in namespace %s", manifestWork.GetName(), manifestWork.GetNamespace())
+		_, err := workclient.ManifestWorks(manifestWork.GetNamespace()).
+			Create(ctx, manifestWork, metav1.CreateOptions{})
 		if err != nil {
 			return err
 		}
-
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 
-	updated, err := EnsureManifestWork(mch, desiredMCH)
+	updated, err := EnsureManifestWork(existingManifestWork, manifestWork)
 	if err != nil {
 		return err
 	}
 	if updated {
-		desiredMCH.ObjectMeta.ResourceVersion = mch.ObjectMeta.ResourceVersion
-		_, err := workclient.ManifestWorks(managedClusterName).
-			Update(ctx, desiredMCH, metav1.UpdateOptions{})
+		manifestWork.ObjectMeta.ResourceVersion = existingManifestWork.ObjectMeta.ResourceVersion
+		_, err := workclient.ManifestWorks(manifestWork.GetNamespace()).
+			Update(ctx, manifestWork, metav1.UpdateOptions{})
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -640,18 +660,168 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 	return nil
 }
 
-func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface,
-	workLister worklisterv1.ManifestWorkLister, managedClusterName string) error {
+func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
+	managedClusterName, hostingClusterName, hostedClusterName string) error {
 	tpl, err := parseTemplates(manifestFS)
 	if err != nil {
 		return err
 	}
 
-	klog.V(2).Infof("rendering templates for app on hosted cluster")
-	var buf bytes.Buffer
-	appHostedConfigValues := struct{}{}
-	tpl.ExecuteTemplate(&buf, "manifests/hypershift/app/hosted", appHostedConfigValues)
-	klog.V(2).Infof("rendering templates for app on hosted cluster: %s", buf.Bytes())
+	if snapshot == "" {
+		return fmt.Errorf("no value found for environment variable SNAPSHOT")
+	}
+	if mceSnapshot == "" {
+		return fmt.Errorf("no value found for environment variable SNAPSHOT")
+	}
+
+	configValues := struct {
+		HostedClusterName string
+		Snapshot          string
+		MCESnapshot       string
+	}{
+		HostedClusterName: "clusters-" + hostedClusterName,
+		Snapshot:          snapshot,
+		MCESnapshot:       mceSnapshot,
+	}
+
+	// apply manifestworks for hub components
+	for component, enabled := range hubComponents {
+		if enabled {
+			klog.V(2).Infof("rendering templates for component %s", component)
+
+			// manifestwork on hypershift hosted cluster
+			var buf bytes.Buffer
+			tpl.ExecuteTemplate(&buf, fmt.Sprintf("manifests/hypershift/%s/hosted", component), configValues)
+			// klog.V(2).Infof("templates for component: %s on hosted cluster: %s", component, buf.String())
+
+			hostedManifests := []workv1.Manifest{}
+			manifestsSize := 0
+			manifestShard := 0
+			yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
+			for {
+				b, err := yamlReader.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				if len(b) != 0 {
+					rawJSON, err := yaml.ToJSON(b)
+					if err != nil {
+						return err
+					}
+					if string(rawJSON) != "null" {
+						klog.V(2).Infof("raw JSON for component: %s on hosted cluster:\n%s\n", component, rawJSON)
+						if manifestsSize+len(rawJSON) < manifestwork_max_size {
+							hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
+							manifestsSize = manifestsSize + len(rawJSON)
+						} else {
+							hostedManifestwork := &workv1.ManifestWork{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
+									Namespace: managedClusterName,
+									Labels: map[string]string{
+										"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+									},
+								},
+								Spec: workv1.ManifestWorkSpec{
+									Workload: workv1.ManifestsTemplate{
+										Manifests: hostedManifests,
+									},
+									DeleteOption: &workv1.DeleteOption{
+										PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+									},
+								},
+							}
+
+							klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifestwork)
+							if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
+								return err
+							}
+
+							manifestShard = manifestShard + 1
+							hostedManifests = []workv1.Manifest{{RawExtension: runtime.RawExtension{Raw: rawJSON}}}
+							manifestsSize = len(rawJSON)
+						}
+						if len(hostedManifests) != 0 {
+							hostedManifestwork := &workv1.ManifestWork{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
+									Namespace: managedClusterName,
+									Labels: map[string]string{
+										"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+									},
+								},
+								Spec: workv1.ManifestWorkSpec{
+									Workload: workv1.ManifestsTemplate{
+										Manifests: hostedManifests,
+									},
+									DeleteOption: &workv1.DeleteOption{
+										PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+									},
+								},
+							}
+
+							klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifestwork)
+							if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
+								return err
+							}
+						}
+					}
+				}
+			}
+
+			// manifestwork on hypershift management cluster
+			buf.Reset()
+			tpl.ExecuteTemplate(&buf, fmt.Sprintf("manifests/hypershift/%s/management", component), configValues)
+			// klog.V(2).Infof("templates for component: %s on management cluster: %s", component, buf.String())
+
+			var managementManifests []workv1.Manifest
+			// yamlReader := yaml.NewYAMLReader(bufio.NewReader(buf))
+			for {
+				b, err := yamlReader.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				if len(b) != 0 {
+					rawJSON, err := yaml.ToJSON(b)
+					if err != nil {
+						return err
+					}
+					if string(rawJSON) != "null" {
+						klog.V(2).Infof("raw JSON for component: %s on management cluster:\n%s\n", component, rawJSON)
+						managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
+					}
+				}
+			}
+
+			managementManifestwork := &workv1.ManifestWork{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-management", component),
+					Namespace: hostingClusterName,
+					Labels: map[string]string{
+						"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+					},
+				},
+				Spec: workv1.ManifestWorkSpec{
+					Workload: workv1.ManifestsTemplate{
+						Manifests: managementManifests,
+					},
+					DeleteOption: &workv1.DeleteOption{
+						PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+					},
+				},
+			}
+
+			if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
 }
@@ -664,7 +834,6 @@ func parseTemplates(manifestFS embed.FS) (*template.Template, error) {
 				return err1
 			}
 
-			klog.V(2).Infof("parseTemplates =====" + file)
 			manifests, err2 := readFileInDir(manifestFS, file)
 			if err2 != nil {
 				return err2
@@ -690,7 +859,6 @@ func readFileInDir(manifestFS embed.FS, dir string) (string, error) {
 			return err
 		}
 
-		klog.V(2).Infof("readFileInDir =====" + file)
 		if !d.IsDir() {
 			b, err := manifestFS.ReadFile(file)
 			if err != nil {
