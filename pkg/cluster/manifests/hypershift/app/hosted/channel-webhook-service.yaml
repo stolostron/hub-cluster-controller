@@ -21,6 +21,6 @@ metadata:
   namespace: {{ .HostedClusterName }}
 subsets:
   - addresses:
-      - ip: <CHANNEL_CLUSTER_IP>
+      - ip: {{ .ChannelClusterIP }}
     ports:
       - port: 443

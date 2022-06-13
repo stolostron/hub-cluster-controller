@@ -75,7 +75,7 @@ spec:
         - --health-server-port
         - "2041"
         - --agent-identifiers
-        - ipv4=<CHANNEL_CLUSTER_IP>
+        - ipv4={{ .ChannelClusterIP }}
         - --keepalive-time
         - 30s
         - --probe-interval

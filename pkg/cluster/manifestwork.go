@@ -626,6 +626,7 @@ func applyManifestWork(ctx context.Context, workclient workclientv1.WorkV1Interf
 	if err != nil {
 		return err
 	}
+
 	if updated {
 		manifestWork.ObjectMeta.ResourceVersion = existingManifestWork.ObjectMeta.ResourceVersion
 		_, err := workclient.ManifestWorks(manifestWork.GetNamespace()).
@@ -661,7 +662,7 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 }
 
 func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
-	managedClusterName, hostingClusterName, hostedClusterName string) error {
+	managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP string) error {
 	tpl, err := parseTemplates(manifestFS)
 	if err != nil {
 		return err
@@ -678,10 +679,15 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		HostedClusterName string
 		Snapshot          string
 		MCESnapshot       string
+		ChannelClusterIP  string
 	}{
 		HostedClusterName: "clusters-" + hostedClusterName,
 		Snapshot:          snapshot,
 		MCESnapshot:       mceSnapshot,
+	}
+
+	if channelClusterIP != "" {
+		configValues.ChannelClusterIP = channelClusterIP
 	}
 
 	// apply manifestworks for hub components
@@ -712,7 +718,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 						return err
 					}
 					if string(rawJSON) != "null" {
-						klog.V(2).Infof("raw JSON for component: %s on hosted cluster:\n%s\n", component, rawJSON)
+						// klog.V(2).Infof("raw JSON for component: %s on hosted cluster:\n%s\n", component, rawJSON)
 						if manifestsSize+len(rawJSON) < manifestwork_max_size {
 							hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 							manifestsSize = manifestsSize + len(rawJSON)
@@ -735,7 +741,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 								},
 							}
 
-							klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifestwork)
+							// klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifests)
 							if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
 								return err
 							}
@@ -744,31 +750,32 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 							hostedManifests = []workv1.Manifest{{RawExtension: runtime.RawExtension{Raw: rawJSON}}}
 							manifestsSize = len(rawJSON)
 						}
-						if len(hostedManifests) != 0 {
-							hostedManifestwork := &workv1.ManifestWork{
-								ObjectMeta: metav1.ObjectMeta{
-									Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
-									Namespace: managedClusterName,
-									Labels: map[string]string{
-										"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
-									},
-								},
-								Spec: workv1.ManifestWorkSpec{
-									Workload: workv1.ManifestsTemplate{
-										Manifests: hostedManifests,
-									},
-									DeleteOption: &workv1.DeleteOption{
-										PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
-									},
-								},
-							}
-
-							klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifestwork)
-							if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
-								return err
-							}
-						}
 					}
+				}
+			}
+
+			if len(hostedManifests) != 0 {
+				hostedManifestwork := &workv1.ManifestWork{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
+						Namespace: managedClusterName,
+						Labels: map[string]string{
+							"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+						},
+					},
+					Spec: workv1.ManifestWorkSpec{
+						Workload: workv1.ManifestsTemplate{
+							Manifests: hostedManifests,
+						},
+						DeleteOption: &workv1.DeleteOption{
+							PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+						},
+					},
+				}
+
+				// klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifests)
+				if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
+					return err
 				}
 			}
 
@@ -793,7 +800,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 						return err
 					}
 					if string(rawJSON) != "null" {
-						klog.V(2).Infof("raw JSON for component: %s on management cluster:\n%s\n", component, rawJSON)
+						//klog.V(2).Infof("raw JSON for component: %s on management cluster:\n%s\n", component, rawJSON)
 						managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 					}
 				}
@@ -817,8 +824,35 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 				},
 			}
 
-			if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
-				return err
+			if component == "app" {
+				managementManifestwork.Spec.ManifestConfigs = []workv1.ManifestConfigOption{
+					{
+						ResourceIdentifier: workv1.ResourceIdentifier{
+							Group:     "",
+							Resource:  "services",
+							Name:      "channels-apps-open-cluster-management-webhook-svc",
+							Namespace: "clusters-" + hostedClusterName,
+						},
+						FeedbackRules: []workv1.FeedbackRule{
+							{
+								Type: workv1.JSONPathsType,
+								JsonPaths: []workv1.JsonPath{
+									{
+										Name: "clusterIP",
+										Path: ".spec.clusterIP",
+									},
+								},
+							},
+						},
+					},
+				}
+				if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
+					return err
+				}
+			} else {
+				if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
+					return err
+				}
 			}
 		}
 	}

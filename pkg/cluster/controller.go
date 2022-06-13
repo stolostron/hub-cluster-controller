@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -69,7 +70,11 @@ func NewHubClusterController(
 		WithFilteredEventsInformersQueueKeyFunc(
 			func(obj runtime.Object) string {
 				accessor, _ := meta.Accessor(obj)
-				return accessor.GetNamespace()
+				if strings.Contains(accessor.GetName(), "-hoh-hub-cluster-app-management") {
+					return strings.ReplaceAll(accessor.GetName(), "-hoh-hub-cluster-app-management", "")
+				} else {
+					return accessor.GetNamespace()
+				}
 			},
 			func(obj interface{}) bool {
 				accessor, err := meta.Accessor(obj)
@@ -78,7 +83,8 @@ func NewHubClusterController(
 				}
 				// only enqueue when the hoh=enabled managed cluster is changed
 				if accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterSubscription ||
-					accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterMCH {
+					accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterMCH ||
+					strings.Contains(accessor.GetName(), "-hoh-hub-cluster-app-management") {
 					return true
 				}
 				return false
@@ -130,9 +136,9 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			return nil
 		}
 		// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
-		for _, conditions := range subscription.Status.ResourceStatus.Manifests {
-			if conditions.ResourceMeta.Kind == "Subscription" {
-				for _, value := range conditions.StatusFeedbacks.Values {
+		for _, manifestCondition := range subscription.Status.ResourceStatus.Manifests {
+			if manifestCondition.ResourceMeta.Kind == "Subscription" {
+				for _, value := range manifestCondition.StatusFeedbacks.Values {
 					if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
 						//fetch user defined mch from annotation
 						err := ApplyMCHManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
@@ -145,8 +151,28 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			}
 		}
 	} else { // for hypershift hosted leaf hub
-		if err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName); err != nil {
+		appliedAppManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-app-management")
+		if errors.IsNotFound(err) {
+			return ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
+		}
+		if err != nil {
 			return err
+		}
+
+		for _, manifestCondition := range appliedAppManifestwork.Status.ResourceStatus.Manifests {
+			if manifestCondition.ResourceMeta.Kind == "Service" {
+				for _, value := range manifestCondition.StatusFeedbacks.Values {
+					if value.Name == "clusterIP" && value.Value.String != nil {
+						klog.V(2).Infof("Got clusterIP for channel service %s", *value.Value.String)
+						channelClusterIP := *value.Value.String
+						err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
+						if err != nil {
+							return err
+						}
+						return nil
+					}
+				}
+			}
 		}
 
 		return nil
