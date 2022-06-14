@@ -860,6 +860,24 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 	return nil
 }
 
+func removeHubManifestworksFromHyperMgtCluster(ctx context.Context, workclient workclientv1.WorkV1Interface,
+	managedClusterName, hostingClusterName string) error {
+	err := workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-app-management", metav1.DeleteOptions{})
+	if err != nil {
+		return err
+	}
+	err = workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-foundation-management", metav1.DeleteOptions{})
+	if err != nil {
+		return err
+	}
+	err = workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-policy-management", metav1.DeleteOptions{})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func parseTemplates(manifestFS embed.FS) (*template.Template, error) {
 	tpl := template.New("")
 	err := fs.WalkDir(manifestFS, ".", func(file string, d fs.DirEntry, err1 error) error {

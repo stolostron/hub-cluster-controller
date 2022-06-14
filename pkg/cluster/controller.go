@@ -122,7 +122,11 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if !managedCluster.DeletionTimestamp.IsZero() {
 		// the managed cluster is deleting, we should not re-apply the manifestwork
 		// wait for managedcluster-import-controller to clean up the manifestwork
-		return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workClient, c.workLister, managedClusterName)
+		if hostingClusterName == "" { // for non-hypershift hosted leaf hub
+			return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workClient, c.workLister, managedClusterName)
+		} else { // for hypershift hosted leaf hub, remove the corresponding manifestworks from hypershift management cluster
+			return removeHubManifestworksFromHyperMgtCluster(ctx, c.workClient, managedClusterName, hostingClusterName)
+		}
 	}
 
 	if hostingClusterName == "" { // for non-hypershift hosted leaf hub
