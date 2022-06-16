@@ -9,6 +9,7 @@ import (
 
 	operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -418,18 +419,47 @@ func createMCHManifestwork(namespace, userDefinedMCH string, imagePullSecret *co
 }
 
 func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
-	// compare the manifests
-	existingBytes, err := json.Marshal(existing.Spec)
-	if err != nil {
-		return false, err
-	}
-	desiredBytes, err := json.Marshal(desired.Spec)
-	if err != nil {
-		return false, err
-	}
-	if string(existingBytes) != string(desiredBytes) {
+	if !equality.Semantic.DeepDerivative(existing.Spec.DeleteOption, desired.Spec.DeleteOption) {
 		return true, nil
 	}
+
+	if !equality.Semantic.DeepDerivative(existing.Spec.ManifestConfigs, desired.Spec.ManifestConfigs) {
+		return true, nil
+	}
+
+	if len(existing.Spec.Workload.Manifests) != len(desired.Spec.Workload.Manifests) {
+		return true, nil
+	}
+
+	for i, m := range existing.Spec.Workload.Manifests {
+		var existingObj, desiredObj interface{}
+		if len(m.RawExtension.Raw) > 0 {
+			if err := json.Unmarshal(m.RawExtension.Raw, &existingObj); err != nil {
+				return false, err
+			}
+		} else {
+			existingObj = m.RawExtension.Object
+		}
+
+		if len(desired.Spec.Workload.Manifests[i].RawExtension.Raw) > 0 {
+			if err := json.Unmarshal(desired.Spec.Workload.Manifests[i].RawExtension.Raw, &desiredObj); err != nil {
+				return false, err
+			}
+		} else {
+			desiredObjBytes, err := json.Marshal(desired.Spec.Workload.Manifests[i].RawExtension.Object)
+			if err != nil {
+				return false, err
+			}
+			if err := json.Unmarshal(desiredObjBytes, &desiredObj); err != nil {
+				return false, err
+			}
+		}
+
+		if !equality.Semantic.DeepDerivative(existingObj, desiredObj) {
+			return true, nil
+		}
+	}
+
 	return false, nil
 }
 
