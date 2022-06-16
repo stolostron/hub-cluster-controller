@@ -512,6 +512,8 @@ func ApplySubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		if err != nil {
 			return nil, err
 		}
+
+		return desiredSubscription, nil
 	}
 	if err != nil {
 		return nil, err
@@ -587,6 +589,8 @@ func ApplyMCHManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		if err != nil {
 			return err
 		}
+
+		return nil
 	}
 	if err != nil {
 		return err
