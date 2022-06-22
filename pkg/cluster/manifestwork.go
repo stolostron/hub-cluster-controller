@@ -690,211 +690,150 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 		configValues.ChannelClusterIP = channelClusterIP
 	}
 
-	// apply manifestworks for hub components
-	for component, enabled := range hubComponents {
-		if enabled {
-			klog.V(2).Infof("rendering templates for component %s", component)
+	// apply manifestwork on hypershift hosted cluster
+	var buf bytes.Buffer
+	tpl.ExecuteTemplate(&buf, "manifests/hypershift/hosted", configValues)
+	// klog.V(2).Infof("templates for objects on hosted cluster: %s", buf.String())
 
-			// manifestwork on hypershift hosted cluster
-			var buf bytes.Buffer
-			tpl.ExecuteTemplate(&buf, fmt.Sprintf("manifests/hypershift/%s/hosted", component), configValues)
-			// klog.V(2).Infof("templates for component: %s on hosted cluster: %s", component, buf.String())
-
-			hostedManifests := []workv1.Manifest{}
-			manifestsSize := 0
-			manifestShard := 0
-			yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
-			for {
-				b, err := yamlReader.Read()
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					return err
-				}
-				if len(b) != 0 {
-					rawJSON, err := yaml.ToJSON(b)
-					if err != nil {
-						return err
-					}
-					if string(rawJSON) != "null" {
-						// klog.V(2).Infof("raw JSON for component: %s on hosted cluster:\n%s\n", component, rawJSON)
-						if manifestsSize+len(rawJSON) < manifestwork_max_size {
-							hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
-							manifestsSize = manifestsSize + len(rawJSON)
-						} else {
-							hostedManifestwork := &workv1.ManifestWork{
-								ObjectMeta: metav1.ObjectMeta{
-									Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
-									Namespace: managedClusterName,
-									Labels: map[string]string{
-										"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
-									},
-								},
-								Spec: workv1.ManifestWorkSpec{
-									Workload: workv1.ManifestsTemplate{
-										Manifests: hostedManifests,
-									},
-									DeleteOption: &workv1.DeleteOption{
-										PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
-									},
-								},
-							}
-
-							// klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifests)
-							if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
-								return err
-							}
-
-							manifestShard = manifestShard + 1
-							hostedManifests = []workv1.Manifest{{RawExtension: runtime.RawExtension{Raw: rawJSON}}}
-							manifestsSize = len(rawJSON)
-						}
-					}
-				}
+	hostedManifests := []workv1.Manifest{}
+	yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
+	for {
+		b, err := yamlReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if len(b) != 0 {
+			rawJSON, err := yaml.ToJSON(b)
+			if err != nil {
+				return err
 			}
-
-			if len(hostedManifests) != 0 {
-				hostedManifestwork := &workv1.ManifestWork{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-hosted-%d", component, manifestShard),
-						Namespace: managedClusterName,
-						Labels: map[string]string{
-							"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
-						},
-					},
-					Spec: workv1.ManifestWorkSpec{
-						Workload: workv1.ManifestsTemplate{
-							Manifests: hostedManifests,
-						},
-						DeleteOption: &workv1.DeleteOption{
-							PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
-						},
-					},
-				}
-
-				// klog.V(2).Infof("manifestwork for component: %s on hosted cluster: %+v", component, hostedManifests)
-				if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
-					return err
-				}
-			}
-
-			// manifestwork on hypershift management cluster
-			buf.Reset()
-			tpl.ExecuteTemplate(&buf, fmt.Sprintf("manifests/hypershift/%s/management", component), configValues)
-			// klog.V(2).Infof("templates for component: %s on management cluster: %s", component, buf.String())
-
-			var managementManifests []workv1.Manifest
-			// yamlReader := yaml.NewYAMLReader(bufio.NewReader(buf))
-			for {
-				b, err := yamlReader.Read()
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					return err
-				}
-				if len(b) != 0 {
-					rawJSON, err := yaml.ToJSON(b)
-					if err != nil {
-						return err
-					}
-					if string(rawJSON) != "null" {
-						//klog.V(2).Infof("raw JSON for component: %s on management cluster:\n%s\n", component, rawJSON)
-						managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
-					}
-				}
-			}
-
-			managementManifestwork := &workv1.ManifestWork{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      managedClusterName + "-" + fmt.Sprintf("hoh-hub-cluster-%s-management", component),
-					Namespace: hostingClusterName,
-					Labels: map[string]string{
-						"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
-					},
-				},
-				Spec: workv1.ManifestWorkSpec{
-					Workload: workv1.ManifestsTemplate{
-						Manifests: managementManifests,
-					},
-					DeleteOption: &workv1.DeleteOption{
-						PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
-					},
-				},
-			}
-
-			if component == "app" {
-				managementManifestwork.Spec.ManifestConfigs = []workv1.ManifestConfigOption{
-					{
-						ResourceIdentifier: workv1.ResourceIdentifier{
-							Group:     "",
-							Resource:  "services",
-							Name:      "channels-apps-open-cluster-management-webhook-svc",
-							Namespace: "clusters-" + hostedClusterName,
-						},
-						FeedbackRules: []workv1.FeedbackRule{
-							{
-								Type: workv1.JSONPathsType,
-								JsonPaths: []workv1.JsonPath{
-									{
-										Name: "clusterIP",
-										Path: ".spec.clusterIP",
-									},
-								},
-							},
-						},
-					},
-				}
-				if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
-					return err
-				}
-			} else {
-				if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
-					return err
-				}
+			if string(rawJSON) != "null" {
+				klog.V(2).Infof("raw JSON for object on hosted cluster:\n%s\n", rawJSON)
+				hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 			}
 		}
 	}
 
+	hostedManifestwork := &workv1.ManifestWork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      managedClusterName + "-hoh-hub-cluster-hosted",
+			Namespace: managedClusterName,
+			Labels: map[string]string{
+				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
+		},
+		Spec: workv1.ManifestWorkSpec{
+			Workload: workv1.ManifestsTemplate{
+				Manifests: hostedManifests,
+			},
+			DeleteOption: &workv1.DeleteOption{
+				PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+			},
+		},
+	}
+
+	// klog.V(2).Infof("manifestwork on hosted cluster: %+v", hostedManifests)
+	if err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
+		return err
+	}
+
+	// manifestwork on hypershift management cluster
+	buf.Reset()
+	tpl.ExecuteTemplate(&buf, "manifests/hypershift/management", configValues)
+	// klog.V(2).Infof("templates for objects on management cluster: %s", buf.String())
+
+	managementManifests := []workv1.Manifest{}
+	// yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
+	for {
+		b, err := yamlReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if len(b) != 0 {
+			rawJSON, err := yaml.ToJSON(b)
+			if err != nil {
+				return err
+			}
+			if string(rawJSON) != "null" {
+				klog.V(2).Infof("raw JSON for object on management cluster:\n%s\n", rawJSON)
+				managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
+			}
+		}
+	}
+
+	managementManifestwork := &workv1.ManifestWork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      managedClusterName + "-hoh-hub-cluster-management",
+			Namespace: hostingClusterName,
+			Labels: map[string]string{
+				"hub-of-hubs.open-cluster-management.io/managed-by": "hoh",
+			},
+		},
+		Spec: workv1.ManifestWorkSpec{
+			Workload: workv1.ManifestsTemplate{
+				Manifests: managementManifests,
+			},
+			DeleteOption: &workv1.DeleteOption{
+				PropagationPolicy: workv1.DeletePropagationPolicyTypeOrphan,
+			},
+			ManifestConfigs: []workv1.ManifestConfigOption{
+				{
+					ResourceIdentifier: workv1.ResourceIdentifier{
+						Group:     "",
+						Resource:  "services",
+						Name:      "channels-apps-open-cluster-management-webhook-svc",
+						Namespace: "clusters-" + hostedClusterName,
+					},
+					FeedbackRules: []workv1.FeedbackRule{
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "clusterIP",
+									Path: ".spec.clusterIP",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := applyManifestWork(ctx, workclient, workLister, managementManifestwork); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func removeHubManifestworksFromHyperMgtCluster(ctx context.Context, workclient workclientv1.WorkV1Interface,
+func removeHubManifestworkFromHyperMgtCluster(ctx context.Context, workclient workclientv1.WorkV1Interface,
 	managedClusterName, hostingClusterName string) error {
-	err := workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-app-management", metav1.DeleteOptions{})
-	if err != nil {
-		return err
-	}
-	err = workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-foundation-management", metav1.DeleteOptions{})
-	if err != nil {
-		return err
-	}
-	err = workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-policy-management", metav1.DeleteOptions{})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return workclient.ManifestWorks(hostingClusterName).Delete(ctx, managedClusterName+"-hoh-hub-cluster-management", metav1.DeleteOptions{})
 }
 
 func parseTemplates(manifestFS embed.FS) (*template.Template, error) {
 	tpl := template.New("")
-	err := fs.WalkDir(manifestFS, ".", func(file string, d fs.DirEntry, err1 error) error {
+	err := fs.WalkDir(manifestFS, ".", func(file string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		if d.IsDir() && (strings.HasSuffix(file, "hosted") || strings.HasSuffix(file, "management")) {
-			if err1 != nil {
-				return err1
-			}
-
-			manifests, err2 := readFileInDir(manifestFS, file)
-			if err2 != nil {
-				return err2
+			manifests, err := readFileInDir(manifestFS, file)
+			if err != nil {
+				return err
 			}
 
 			t := tpl.New(file)
-			_, err3 := t.Parse(manifests)
-			if err3 != nil {
-				return err3
+			_, err = t.Parse(manifests)
+			if err != nil {
+				return err
 			}
 		}
 

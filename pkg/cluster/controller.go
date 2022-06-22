@@ -124,8 +124,8 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		// wait for managedcluster-import-controller to clean up the manifestwork
 		if hostingClusterName == "" { // for non-hypershift hosted leaf hub
 			return removePostponeDeleteAnnotationForSubManifestwork(ctx, c.workClient, c.workLister, managedClusterName)
-		} else { // for hypershift hosted leaf hub, remove the corresponding manifestworks from hypershift management cluster
-			return removeHubManifestworksFromHyperMgtCluster(ctx, c.workClient, managedClusterName, hostingClusterName)
+		} else { // for hypershift hosted leaf hub, remove the corresponding manifestwork from hypershift management cluster
+			return removeHubManifestworkFromHyperMgtCluster(ctx, c.workClient, managedClusterName, hostingClusterName)
 		}
 	}
 
@@ -155,7 +155,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			}
 		}
 	} else { // for hypershift hosted leaf hub
-		appliedAppManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-app-management")
+		appliedAppManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-management")
 		if errors.IsNotFound(err) {
 			return ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
 		}
