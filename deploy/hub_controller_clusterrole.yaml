@@ -21,3 +21,10 @@ rules:
 - apiGroups: ["packages.operators.coreos.com"]
   resources: ["packagemanifests"]
   verbs: ["get", "list"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps.open-cluster-management.io"]
+  resources: ["channels", "subscriptions", "placementrules"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+

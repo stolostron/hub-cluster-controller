@@ -18,8 +18,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	yamlserializer "k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -33,16 +37,6 @@ import (
 //go:embed manifests/hypershift
 var manifestFS embed.FS
 
-var hubComponents = map[string]bool{
-	"app":           true,
-	"foundation":    true,
-	"hive":          false,
-	"observability": false,
-	"policy":        true,
-}
-
-const manifestwork_max_size = 50 * 1024
-
 const (
 	hohHubClusterSubscription     = "hoh-hub-cluster-subscription"
 	hohHubClusterMCH              = "hoh-hub-cluster-mch"
@@ -51,6 +45,7 @@ const (
 	openshiftMarketPlaceNamespace = "openshift-marketplace"
 )
 
+var decUnstructured = yamlserializer.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 var podNamespace, snapshot, mceSnapshot, imagePullSecretName string
 
 func init() {
@@ -59,6 +54,7 @@ func init() {
 	mceSnapshot, _ = os.LookupEnv("MCE_SNAPSHOT")
 	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
 	podNamespace, _ = os.LookupEnv("POD_NAMESPACE")
+	decUnstructured = yamlserializer.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 }
 
 func getClusterRoleRaw() []byte {
@@ -477,6 +473,7 @@ func EnsureManifestWork(existing, desired *workv1.ManifestWork) (bool, error) {
 		}
 
 		if !equality.Semantic.DeepDerivative(existingObj, desiredObj) {
+			klog.V(2).Infof("existing manifest object %d is not equal to the desired manifest object", i)
 			return true, nil
 		}
 	}
@@ -554,6 +551,7 @@ func ApplySubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		return nil, err
 	}
 	if updated {
+		klog.V(2).Infof("updating the manifestwork: %s/%s because it's changed", subscription.GetNamespace(), subscription.GetName())
 		desiredSubscription.ObjectMeta.ResourceVersion = subscription.ObjectMeta.ResourceVersion
 		subscription, err = workclient.ManifestWorks(managedClusterName).
 			Update(ctx, desiredSubscription, metav1.UpdateOptions{})
@@ -561,6 +559,7 @@ func ApplySubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 			return nil, err
 		}
 	}
+
 	return subscription, nil
 }
 
@@ -628,6 +627,7 @@ func applyManifestWork(ctx context.Context, workclient workclientv1.WorkV1Interf
 	}
 
 	if updated {
+		klog.V(2).Infof("updating manifestwork: %s/%s because it's changed", manifestWork.GetNamespace(), manifestWork.GetName())
 		manifestWork.ObjectMeta.ResourceVersion = existingManifestWork.ObjectMeta.ResourceVersion
 		_, err := workclient.ManifestWorks(manifestWork.GetNamespace()).
 			Update(ctx, manifestWork, metav1.UpdateOptions{})
@@ -711,7 +711,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 				return err
 			}
 			if string(rawJSON) != "null" {
-				klog.V(2).Infof("raw JSON for object on hosted cluster:\n%s\n", rawJSON)
+				// klog.V(2).Infof("raw JSON for object on hosted cluster:\n%s\n", rawJSON)
 				hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 			}
 		}
@@ -761,7 +761,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 				return err
 			}
 			if string(rawJSON) != "null" {
-				klog.V(2).Infof("raw JSON for object on management cluster:\n%s\n", rawJSON)
+				// klog.V(2).Infof("raw JSON for object on management cluster:\n%s\n", rawJSON)
 				managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 			}
 		}
@@ -861,4 +861,169 @@ func readFileInDir(manifestFS embed.FS, dir string) (string, error) {
 	})
 
 	return res, err
+}
+
+func getHohRepoHost(ctx context.Context, dynamicClient dynamic.Interface) (string, error) {
+	routeGVR := schema.GroupVersionResource{
+		Group:    "route.openshift.io",
+		Version:  "v1",
+		Resource: "routes",
+	}
+	hoHRepoRoute, err := dynamicClient.Resource(routeGVR).Namespace(podNamespace).
+		Get(ctx, "hub-of-hubs-repo", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	routeStatus := hoHRepoRoute.Object["status"].(map[string]interface{})
+	routeIngress := routeStatus["ingress"].([]interface{})
+	serverHost := routeIngress[0].(map[string]interface{})["host"].(string)
+	klog.V(2).Infof("hub-of-hubs-repo server is %s", serverHost)
+	return serverHost, nil
+}
+
+func getACMHubChannel(channelNamespace, hoHRepoHost string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: apps.open-cluster-management.io/v1
+kind: Channel
+metadata:
+  name: acm-hub-channel
+  namespace: %s
+  labels:
+    name: acm-hub
+    hub-of-hubs.open-cluster-management.io/managed-by: hoh
+spec:
+  pathname: "https://%s/charts"
+  type: HelmRepo
+  insecureSkipVerify: true`, channelNamespace, hoHRepoHost))
+}
+
+func getACMHubPlacementRule(placementRuleNamespace string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: acm-hub-placement
+  namespace: %s
+  labels:
+    name: acm-hub
+    hub-of-hubs.open-cluster-management.io/managed-by: hoh
+    hub-of-hubs.open-cluster-management.io/local-resource: ""
+spec:
+  clusterSelector:
+    matchLabels:
+      createdBy: hypershift`, placementRuleNamespace))
+}
+
+func getACMHubSubscription(channelNamespace, subcriptionNamespace, version string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: acm-hub-subscription
+  namespace: %s
+  labels:
+    name: acm-hub
+    hub-of-hubs.open-cluster-management.io/managed-by: hoh
+spec:
+  name: acm-hub
+  channel: %s/acm-hub-channel
+  packageFilter:
+    version: %s
+  packageOverrides:
+  - packageName: acm-hub
+    packageAlias: acm-hub
+  placement:
+    placementRef:
+      name: acm-hub-placement
+      kind: PlacementRule`, subcriptionNamespace, channelNamespace, version))
+}
+
+func applyDynamicResource(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, desired *unstructured.Unstructured) error {
+	existingObj, err := dynamicClient.Resource(gvr).Namespace(desired.GetNamespace()).Get(ctx, desired.GetName(), metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		klog.V(2).Infof("creating unstructured object %s in namespace %s", desired.GetName(), desired.GetNamespace())
+		_, err := dynamicClient.Resource(gvr).Namespace(desired.GetNamespace()).Create(ctx, desired, metav1.CreateOptions{})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	toUpdate, modified, err := ensureGenericSpec(existingObj, desired)
+	if err != nil {
+		return err
+	}
+
+	if !modified {
+		return nil
+	}
+
+	klog.V(2).Infof("desired unstructured object %s/%s is changed, updating it...", desired.GetNamespace(), desired.GetName())
+	_, err = dynamicClient.Resource(gvr).Namespace(toUpdate.GetNamespace()).Update(ctx, toUpdate, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ensureGenericSpec(existing, desired *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
+	desiredCopy := desired.DeepCopy()
+	desiredSpec, _, err := unstructured.NestedMap(desiredCopy.UnstructuredContent(), "spec")
+	if err != nil {
+		return nil, false, err
+	}
+	existingSpec, _, err := unstructured.NestedMap(existing.UnstructuredContent(), "spec")
+	if err != nil {
+		return nil, false, err
+	}
+
+	if equality.Semantic.DeepEqual(existingSpec, desiredSpec) {
+		return existing, false, nil
+	}
+
+	existingCopy := existing.DeepCopy()
+	if err := unstructured.SetNestedMap(existingCopy.UnstructuredContent(), desiredSpec, "spec"); err != nil {
+		return nil, true, err
+	}
+
+	return existingCopy, true, nil
+}
+
+func ApplyHubHelmSub(ctx context.Context, dynamicClient dynamic.Interface, managedClusterName string) error {
+	hoHRepoHost, err := getHohRepoHost(ctx, dynamicClient)
+	if err != nil {
+		return err
+	}
+
+	// apply the acm hub channel in default namespace because another helm repo channel
+	// called charts-v1 already exists in in the open-cluster-management namespace
+	acmHubChannelBytes := getACMHubChannel("default", hoHRepoHost)
+	acmHubPlacementRuleBytes := getACMHubPlacementRule(defaultInstallNamespace)
+	acmHubSubscriptionBytes := getACMHubSubscription("default", defaultInstallNamespace, "2.5.0")
+
+	acmHubChannel := &unstructured.Unstructured{}
+	acmHubPlacementRule := &unstructured.Unstructured{}
+	acmHubSubscription := &unstructured.Unstructured{}
+	if _, _, err := decUnstructured.Decode(acmHubChannelBytes, nil, acmHubChannel); err != nil {
+		return err
+	}
+	if _, _, err := decUnstructured.Decode(acmHubPlacementRuleBytes, nil, acmHubPlacementRule); err != nil {
+		return err
+	}
+	if _, _, err := decUnstructured.Decode(acmHubSubscriptionBytes, nil, acmHubSubscription); err != nil {
+		return err
+	}
+
+	if err := applyDynamicResource(ctx, dynamicClient, schema.GroupVersionResource{Group: "apps.open-cluster-management.io", Version: "v1", Resource: "channels"}, acmHubChannel); err != nil {
+		return err
+	}
+	if err := applyDynamicResource(ctx, dynamicClient, schema.GroupVersionResource{Group: "apps.open-cluster-management.io", Version: "v1", Resource: "placementrules"}, acmHubPlacementRule); err != nil {
+		return err
+	}
+	if err := applyDynamicResource(ctx, dynamicClient, schema.GroupVersionResource{Group: "apps.open-cluster-management.io", Version: "v1", Resource: "subscriptions"}, acmHubSubscription); err != nil {
+		return err
+	}
+
+	return nil
 }

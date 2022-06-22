@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -24,6 +25,7 @@ import (
 
 // clusterController reconciles instances of ManagedCluster on the hub.
 type clusterController struct {
+	dynamicClient dynamic.Interface
 	kubeClient    *kubernetes.Clientset
 	workClient    workclientv1.WorkV1Interface
 	clusterLister clusterlisterv1.ManagedClusterLister
@@ -34,12 +36,14 @@ type clusterController struct {
 
 // NewHubClusterController creates a new hub cluster controller
 func NewHubClusterController(
+	dynamicClient dynamic.Interface,
 	kubeClient *kubernetes.Clientset,
 	workClient workclientv1.WorkV1Interface,
 	clusterInformer clusterinformerv1.ManagedClusterInformer,
 	workInformer workinformerv1.ManifestWorkInformer,
 	recorder events.Recorder) factory.Controller {
 	c := &clusterController{
+		dynamicClient: dynamicClient,
 		kubeClient:    kubeClient,
 		workClient:    workClient,
 		clusterLister: clusterInformer.Lister(),
@@ -70,8 +74,8 @@ func NewHubClusterController(
 		WithFilteredEventsInformersQueueKeyFunc(
 			func(obj runtime.Object) string {
 				accessor, _ := meta.Accessor(obj)
-				if strings.Contains(accessor.GetName(), "-hoh-hub-cluster-app-management") {
-					return strings.ReplaceAll(accessor.GetName(), "-hoh-hub-cluster-app-management", "")
+				if strings.Contains(accessor.GetName(), "-hoh-hub-cluster-management") {
+					return strings.ReplaceAll(accessor.GetName(), "-hoh-hub-cluster-management", "")
 				} else {
 					return accessor.GetNamespace()
 				}
@@ -84,7 +88,7 @@ func NewHubClusterController(
 				// only enqueue when the hoh=enabled managed cluster is changed
 				if accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterSubscription ||
 					accessor.GetName() == accessor.GetNamespace()+"-"+hohHubClusterMCH ||
-					strings.Contains(accessor.GetName(), "-hoh-hub-cluster-app-management") {
+					strings.Contains(accessor.GetName(), "-hoh-hub-cluster-management") {
 					return true
 				}
 				return false
@@ -132,14 +136,17 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if hostingClusterName == "" { // for non-hypershift hosted leaf hub
 		subscription, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
 		if err != nil {
+			klog.V(2).Infof("failed to apply subscription manifestwork: %v", err)
 			return err
 		}
 
 		if subscription == nil {
+			klog.V(2).Infof("subscription manifestwork is nil, retry after 1 second")
 			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
 			return nil
 		}
 		// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
+		klog.V(2).Infof("checking status feedback value from subscription before applying mch manifestwork")
 		for _, manifestCondition := range subscription.Status.ResourceStatus.Manifests {
 			if manifestCondition.ResourceMeta.Kind == "Subscription" {
 				for _, value := range manifestCondition.StatusFeedbacks.Values {
@@ -155,15 +162,22 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			}
 		}
 	} else { // for hypershift hosted leaf hub
-		appliedAppManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-management")
+		// apply the CRDs into hypershift hosted cluster via helm chart subscription
+		if err := ApplyHubHelmSub(ctx, c.dynamicClient, managedClusterName); err != nil {
+			return err
+		}
+
+		appliedHubManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-management")
 		if errors.IsNotFound(err) {
+			klog.V(2).Infof("hub manifestwork is not found, creating it....")
 			return ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
 		}
 		if err != nil {
 			return err
 		}
 
-		for _, manifestCondition := range appliedAppManifestwork.Status.ResourceStatus.Manifests {
+		klog.V(2).Infof("checking status feedback value from hub manifestwork before applying mch manifestwork")
+		for _, manifestCondition := range appliedHubManifestwork.Status.ResourceStatus.Manifests {
 			if manifestCondition.ResourceMeta.Kind == "Service" {
 				for _, value := range manifestCondition.StatusFeedbacks.Values {
 					if value.Name == "clusterIP" && value.Value.String != nil {
