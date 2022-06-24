@@ -173,7 +173,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			return nil
 		}
 
-		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
+		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
 		if err != nil {
 			klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
 			return err
@@ -192,7 +192,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 					if value.Name == "clusterIP" && value.Value.String != nil {
 						klog.V(2).Infof("Got clusterIP for channel service %s", *value.Value.String)
 						channelClusterIP := *value.Value.String
-						_, err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
+						_, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
 						if err != nil {
 							return err
 						}

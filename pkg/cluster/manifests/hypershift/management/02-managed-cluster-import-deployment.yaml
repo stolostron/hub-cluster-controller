@@ -45,7 +45,7 @@ spec:
         - name: DEFAULT_IMAGE_REGISTRY
           value: {{.MCE.DefaultImageRegistry}}
         - name: DEFAULT_IMAGE_PULL_SECRET
-          value: pull-secret
+          value: {{.ImagePullSecret}}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:

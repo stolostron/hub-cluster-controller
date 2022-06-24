@@ -69,6 +69,7 @@ type MCEImageEntry struct {
 
 type HypershiftConfigValues struct {
 	HostedClusterName string
+	ImagePullSecret   string
 	ChannelClusterIP  string
 	ACM               ACMImageEntry
 	MCE               MCEImageEntry
@@ -103,8 +104,11 @@ func init() {
 	// for test develop version
 	snapshot, _ = os.LookupEnv("SNAPSHOT")
 	mceSnapshot, _ = os.LookupEnv("MCE_SNAPSHOT")
-	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
 	podNamespace, _ = os.LookupEnv("POD_NAMESPACE")
+	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
+	if imagePullSecretName == "" {
+		imagePullSecretName = "multiclusterhub-operator-pull-secret"
+	}
 	decUnstructured = yamlserializer.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 }
 
@@ -716,7 +720,7 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 	return nil
 }
 
-func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
+func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
 	managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP string) (*workv1.ManifestWork, error) {
 	p := packagemanifest.GetPackageManifest()
 	if p == nil || len(p.ACMImages) == 0 || len(p.MCEImages) == 0 {
@@ -743,6 +747,7 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 	}
 
 	defaultHypershiftConfigValues.HostedClusterName = "clusters-" + hostedClusterName
+	defaultHypershiftConfigValues.ImagePullSecret = imagePullSecretName
 	defaultHypershiftConfigValues.MCE.DefaultImageRegistry = mceDefaultImageRegistry
 
 	if channelClusterIP != "" {
@@ -774,6 +779,14 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 				hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 			}
 		}
+	}
+
+	imagePullSecret, err := generatePullSecret(kubeClient, "clusters-"+hostedClusterName)
+	if err != nil {
+		return nil, err
+	}
+	if imagePullSecret != nil {
+		hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Object: imagePullSecret}})
 	}
 
 	hostedManifestwork := &workv1.ManifestWork{
@@ -824,6 +837,10 @@ func ApplyHubManifestWorks(ctx context.Context, workclient workclientv1.WorkV1In
 				managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Raw: rawJSON}})
 			}
 		}
+	}
+
+	if imagePullSecret != nil {
+		managementManifests = append(managementManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Object: imagePullSecret}})
 	}
 
 	managementManifestwork := &workv1.ManifestWork{
