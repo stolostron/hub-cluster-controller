@@ -9,7 +9,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
@@ -134,20 +133,20 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 	}
 
 	if hostingClusterName == "" { // for non-hypershift hosted leaf hub
-		subscription, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
+		subscriptionManifestwork, err := ApplySubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName)
 		if err != nil {
 			klog.V(2).Infof("failed to apply subscription manifestwork: %v", err)
 			return err
 		}
 
-		if subscription == nil {
+		if subscriptionManifestwork == nil {
 			klog.V(2).Infof("subscription manifestwork is nil, retry after 1 second")
 			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
 			return nil
 		}
 		// if the csv PHASE is Succeeded, then create mch manifestwork to install Hub
 		klog.V(2).Infof("checking status feedback value from subscription before applying mch manifestwork")
-		for _, manifestCondition := range subscription.Status.ResourceStatus.Manifests {
+		for _, manifestCondition := range subscriptionManifestwork.Status.ResourceStatus.Manifests {
 			if manifestCondition.ResourceMeta.Kind == "Subscription" {
 				for _, value := range manifestCondition.StatusFeedbacks.Values {
 					if value.Name == "state" && *value.Value.String == "AtLatestKnown" {
@@ -163,27 +162,37 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 	} else { // for hypershift hosted leaf hub
 		// apply the CRDs into hypershift hosted cluster via helm chart subscription
-		if err := ApplyHubHelmSub(ctx, c.dynamicClient, managedClusterName); err != nil {
-			return err
-		}
-
-		appliedHubManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-management")
-		if errors.IsNotFound(err) {
-			klog.V(2).Infof("hub manifestwork is not found, creating it....")
-			return ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
-		}
+		packageManifestReady, err := ApplyHubHelmSub(ctx, c.dynamicClient, managedClusterName)
 		if err != nil {
 			return err
 		}
 
+		if !packageManifestReady {
+			klog.V(2).Infof("package manifest is not ready, retry after 1 second")
+			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
+			return nil
+		}
+
+		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
+		if err != nil {
+			klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
+			return err
+		}
+
+		if hubManifestwork == nil {
+			klog.V(2).Infof("hub manifestwork is nil, retry after 1 second")
+			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
+			return nil
+		}
+
 		klog.V(2).Infof("checking status feedback value from hub manifestwork before applying mch manifestwork")
-		for _, manifestCondition := range appliedHubManifestwork.Status.ResourceStatus.Manifests {
+		for _, manifestCondition := range hubManifestwork.Status.ResourceStatus.Manifests {
 			if manifestCondition.ResourceMeta.Kind == "Service" {
 				for _, value := range manifestCondition.StatusFeedbacks.Values {
 					if value.Name == "clusterIP" && value.Value.String != nil {
 						klog.V(2).Infof("Got clusterIP for channel service %s", *value.Value.String)
 						channelClusterIP := *value.Value.String
-						err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
+						_, err := ApplyHubManifestWorks(ctx, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
 						if err != nil {
 							return err
 						}

@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: managedcluster-import-controller
-  namespace: {{ .HostedClusterName }}
+  namespace: {{.HostedClusterName}}
   labels:
     app: managedcluster-import-controller
 spec:
@@ -20,7 +20,7 @@ spec:
       serviceAccountName: default
       containers:
       - name: managedcluster-import-controller
-        image: quay.io/stolostron/managedcluster-import-controller:{{ .MCESnapshot }}
+        image: {{.MCE.ManagedClusterImportController | getMCEImage}}
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /var/run/secrets/hypershift
@@ -37,13 +37,13 @@ spec:
         - name: OPERATOR_NAME
           value: "managedcluster-import-controller"
         - name: REGISTRATION_OPERATOR_IMAGE
-          value: quay.io/stolostron/registration-operator:{{ .MCESnapshot }}
+          value: {{.MCE.RegistrationOperator | getMCEImage}}
         - name: REGISTRATION_IMAGE
-          value: quay.io/stolostron/registration:{{ .MCESnapshot }}
+          value: {{.MCE.Registration | getMCEImage}}
         - name: WORK_IMAGE
-          value: quay.io/stolostron/work:{{ .MCESnapshot }}
+          value: {{.MCE.Work | getMCEImage}}
         - name: DEFAULT_IMAGE_REGISTRY
-          value: quay.io/stolostron
+          value: {{.MCE.DefaultImageRegistry}}
         - name: DEFAULT_IMAGE_PULL_SECRET
           value: pull-secret
         - name: POD_NAMESPACE

@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: konnectivity-agent-webhook
-  namespace: {{ .HostedClusterName }}
+  namespace: {{.HostedClusterName}}
 spec:
   progressDeadlineSeconds: 600
   replicas: 1
@@ -24,7 +24,7 @@ spec:
       labels:
         app: konnectivity-agent-webhook
         hypershift.openshift.io/control-plane-component: konnectivity-agent-webhook
-        hypershift.openshift.io/hosted-control-plane: {{ .HostedClusterName }}
+        hypershift.openshift.io/hosted-control-plane: {{.HostedClusterName}}
     spec:
       affinity:
         nodeAffinity:
@@ -41,14 +41,14 @@ spec:
               - key: hypershift.openshift.io/cluster
                 operator: In
                 values:
-                - {{ .HostedClusterName }}
+                - {{.HostedClusterName}}
             weight: 100
         podAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - podAffinityTerm:
               labelSelector:
                 matchLabels:
-                  hypershift.openshift.io/hosted-control-plane: {{ .HostedClusterName }}
+                  hypershift.openshift.io/hosted-control-plane: {{.HostedClusterName}}
               topologyKey: kubernetes.io/hostname
             weight: 100
         podAntiAffinity:
@@ -75,7 +75,7 @@ spec:
         - --health-server-port
         - "2041"
         - --agent-identifiers
-        - ipv4={{ .ChannelClusterIP }}
+        - ipv4={{.ChannelClusterIP}}
         - --keepalive-time
         - 30s
         - --probe-interval
@@ -86,7 +86,7 @@ spec:
         - 5m
         command:
         - /usr/bin/proxy-agent
-        image: registry.ci.openshift.org/hypershift/apiserver-network-proxy:latest
+        image: quay.io/stolostron/apiserver-network-proxy:latest
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 3
@@ -122,7 +122,7 @@ spec:
       - effect: NoSchedule
         key: hypershift.openshift.io/cluster
         operator: Equal
-        value: {{ .HostedClusterName }}
+        value: {{.HostedClusterName}}
       volumes:
       - name: agent-certs
         secret:

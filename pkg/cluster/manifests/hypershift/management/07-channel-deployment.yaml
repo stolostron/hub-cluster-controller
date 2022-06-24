@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: multicluster-operators-channel
-  namespace: {{ .HostedClusterName }}
+  namespace: {{.HostedClusterName}}
   labels:
     app: multicluster-operators-channel
 spec:
@@ -19,7 +19,7 @@ spec:
       serviceAccountName: multicluster-operators
       containers:
         - name: multicluster-operators-channel
-          image: quay.io/stolostron/multicluster-operators-channel:{{ .Snapshot }}
+          image: {{.ACM.MulticlusterOperatorsChannel | getACMImage}}
           imagePullPolicy: Always
           volumeMounts:
           - mountPath: /var/run/secrets/hypershift
@@ -63,7 +63,7 @@ metadata:
   labels:
     app: multicluster-operators-channel
   name: channels-apps-open-cluster-management-webhook-svc
-  namespace: {{ .HostedClusterName }}
+  namespace: {{.HostedClusterName}}
 spec:
   ports:
   - port: 443

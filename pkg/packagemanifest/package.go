@@ -1,24 +1,28 @@
 package packagemanifest
 
-type PackageManifest struct {
-	DefaultChannel string
-	CurrentCSV     string
+type PackageManifestInfo struct {
+	ACMDefaultChannel string
+	ACMCurrentCSV     string
+	ACMImages         map[string]string
+	MCEDefaultChannel string
+	MCECurrentCSV     string
+	MCEImages         map[string]string
 }
 
-var ocmPackageManifest *PackageManifest
+var acmPackageManifestInfo = &PackageManifestInfo{}
 
-func GetPackageManifest() *PackageManifest {
-	return ocmPackageManifest
+func GetPackageManifest() *PackageManifestInfo {
+	return acmPackageManifestInfo
 }
 
-func SetPackageManifest(p *PackageManifest) {
-	ocmPackageManifest = p
+func SetPackageManifest(p *PackageManifestInfo) {
+	acmPackageManifestInfo = p
 }
 
-func EnsurePackageManifest(new PackageManifest) bool {
+func EnsurePackageManifest(new PackageManifestInfo) bool {
 	existing := GetPackageManifest()
-	if existing.CurrentCSV != new.CurrentCSV ||
-		existing.DefaultChannel != new.DefaultChannel {
+	if existing.ACMCurrentCSV != new.ACMCurrentCSV ||
+		existing.ACMDefaultChannel != new.ACMDefaultChannel {
 		return true
 	}
 	return false

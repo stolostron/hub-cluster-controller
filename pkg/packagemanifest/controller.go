@@ -2,6 +2,8 @@ package packagemanifest
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -52,7 +54,7 @@ func NewPackageManifestController(
 					return false
 				}
 				// only enqueue when the name is advanced-cluster-management
-				if name == "advanced-cluster-management" {
+				if name == "advanced-cluster-management" || name == "multicluster-engine" {
 					return true
 				}
 				return false
@@ -86,23 +88,99 @@ func (c *packageManifestController) sync(ctx context.Context, syncCtx factory.Sy
 		return nil
 	}
 
-	defaultChannel := statusObj["defaultChannel"].(string)
-	klog.V(2).Infof("the defaultChannel is %s", defaultChannel)
+	if name == "advanced-cluster-management" {
+		defaultChannel := statusObj["defaultChannel"].(string)
+		klog.V(2).Infof("ACM defaultChannel is %s", defaultChannel)
 
-	currentCSV := ""
-	channels := statusObj["channels"].([]interface{})
+		currentCSV := ""
+		channels := statusObj["channels"].([]interface{})
 
-	for _, channel := range channels {
-		if channel.(map[string]interface{})["name"].(string) == defaultChannel {
-			currentCSV = channel.(map[string]interface{})["currentCSV"].(string)
+		ACMImages := map[string]string{}
+		for _, channel := range channels {
+			if channel.(map[string]interface{})["name"].(string) == defaultChannel {
+				currentCSV = channel.(map[string]interface{})["currentCSV"].(string)
+				// retrieve the acm related images
+				acmRelatedImages := channel.(map[string]interface{})["currentCSVDesc"].(map[string]interface{})["relatedImages"].([]interface{})
+				for _, img := range acmRelatedImages {
+					imgStr := img.(string)
+					var imgStrs []string
+					if strings.Contains(imgStr, "@") {
+						imgStrs = strings.Split(imgStr, "@")
+					} else if strings.Contains(imgStr, ":") {
+						imgStrs = strings.Split(imgStr, ":")
+					} else {
+						return fmt.Errorf("invalid image format: %s in packagemanifest", imgStr)
+					}
+					if len(imgStrs) != 2 {
+						return fmt.Errorf("invalid image format: %s in packagemanifest", imgStr)
+					}
+					imgNameStrs := strings.Split(imgStrs[0], "/")
+					imageName := imgNameStrs[len(imgNameStrs)-1]
+					// words := strings.Split(imageName, "-")
+					// for i, w := range words {
+					// 	words[i] = strings.Title(w)
+					// }
+					// imageKey := strings.Join(words, "")
+					imageKey := strings.TrimSuffix(imageName, "-rhel8")
+					ACMImages[imageKey] = imgStr
+				}
+				break
+			}
 		}
-	}
-	klog.V(2).Infof("the currentCSV is %s", currentCSV)
+		klog.V(2).Infof("ACM currentCSV is %s", currentCSV)
+		//klog.V(2).Infof("ACM images %v", ACMImages)
 
-	//the PackageManifest is changed, need to store this new value
-	SetPackageManifest(&PackageManifest{
-		DefaultChannel: defaultChannel,
-		CurrentCSV:     currentCSV,
-	})
+		acmPackageManifestInfo.ACMDefaultChannel = defaultChannel
+		acmPackageManifestInfo.ACMCurrentCSV = currentCSV
+		acmPackageManifestInfo.ACMImages = ACMImages
+	}
+
+	if name == "multicluster-engine" {
+		defaultChannel := statusObj["defaultChannel"].(string)
+		klog.V(2).Infof("MCE defaultChannel is %s", defaultChannel)
+
+		currentCSV := ""
+		channels := statusObj["channels"].([]interface{})
+
+		MCEImages := map[string]string{}
+		for _, channel := range channels {
+			if channel.(map[string]interface{})["name"].(string) == defaultChannel {
+				currentCSV = channel.(map[string]interface{})["currentCSV"].(string)
+				// retrieve the mce related images
+				mceRelatedImages := channel.(map[string]interface{})["currentCSVDesc"].(map[string]interface{})["relatedImages"].([]interface{})
+				for _, img := range mceRelatedImages {
+					imgStr := img.(string)
+					var imgStrs []string
+					if strings.Contains(imgStr, "@") {
+						imgStrs = strings.Split(imgStr, "@")
+					} else if strings.Contains(imgStr, ":") {
+						imgStrs = strings.Split(imgStr, ":")
+					} else {
+						return fmt.Errorf("invalid image format: %s in packagemanifest", imgStr)
+					}
+					if len(imgStrs) != 2 {
+						return fmt.Errorf("invalid image format: %s in packagemanifest", imgStr)
+					}
+					imgNameStrs := strings.Split(imgStrs[0], "/")
+					imageName := imgNameStrs[len(imgNameStrs)-1]
+					// words := strings.Split(imageName, "-")
+					// for i, w := range words {
+					// 	words[i] = strings.Title(w)
+					// }
+					// imageKey := strings.Join(words, "")
+					imageKey := strings.TrimSuffix(imageName, "-rhel8")
+					MCEImages[imageKey] = imgStr
+				}
+				break
+			}
+		}
+		klog.V(2).Infof("MCE currentCSV is %s", currentCSV)
+		//klog.V(2).Infof("MCE images %v", MCEImages)
+
+		acmPackageManifestInfo.MCEDefaultChannel = defaultChannel
+		acmPackageManifestInfo.MCECurrentCSV = currentCSV
+		acmPackageManifestInfo.MCEImages = MCEImages
+	}
+
 	return nil
 }
