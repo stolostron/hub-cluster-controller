@@ -746,7 +746,7 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		return nil, err
 	}
 
-	hypershiftHostedClusterName := hostingNamespace + hostedClusterName
+	hypershiftHostedClusterName := hostingNamespace + "-" + hostedClusterName
 	defaultHypershiftConfigValues.HostedClusterName = hypershiftHostedClusterName
 	defaultHypershiftConfigValues.ImagePullSecret = imagePullSecretName
 	defaultHypershiftConfigValues.MCE.DefaultImageRegistry = mceDefaultImageRegistry
@@ -999,7 +999,7 @@ metadata:
 spec:
   clusterSelector:
     matchLabels:
-      createdBy: hypershift`, placementRuleNamespace))
+      hub-of-hubs.open-cluster-management.io/created-by-hypershift: "true"`, placementRuleNamespace))
 }
 
 func getACMHubSubscription(channelNamespace, subcriptionNamespace, version string) []byte {

@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
+	clusterclientv1 "open-cluster-management.io/api/client/cluster/clientset/versioned/typed/cluster/v1"
 	clusterinformerv1 "open-cluster-management.io/api/client/cluster/informers/externalversions/cluster/v1"
 	clusterlisterv1 "open-cluster-management.io/api/client/cluster/listers/cluster/v1"
 	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
@@ -29,6 +30,7 @@ type clusterController struct {
 	dynamicClient dynamic.Interface
 	kubeClient    *kubernetes.Clientset
 	workClient    workclientv1.WorkV1Interface
+	clusterClient clusterclientv1.ClusterV1Interface
 	clusterLister clusterlisterv1.ManagedClusterLister
 	workLister    worklisterv1.ManifestWorkLister
 	cache         resourceapply.ResourceCache
@@ -40,6 +42,7 @@ func NewHubClusterController(
 	dynamicClient dynamic.Interface,
 	kubeClient *kubernetes.Clientset,
 	workClient workclientv1.WorkV1Interface,
+	clusterClient clusterclientv1.ClusterV1Interface,
 	clusterInformer clusterinformerv1.ManagedClusterInformer,
 	workInformer workinformerv1.ManifestWorkInformer,
 	recorder events.Recorder) factory.Controller {
@@ -47,6 +50,7 @@ func NewHubClusterController(
 		dynamicClient: dynamicClient,
 		kubeClient:    kubeClient,
 		workClient:    workClient,
+		clusterClient: clusterClient,
 		clusterLister: clusterInformer.Lister(),
 		workLister:    workInformer.Lister(),
 		cache:         resourceapply.NewResourceCache(),
@@ -64,9 +68,8 @@ func NewHubClusterController(
 					return false
 				}
 				// enqueue all managed cluster except for local-cluster and hoh=disabled
-				// for hypershift hosted cluster, there is no vendor label.
-				// TODO: also need to filter the *KS
-				if accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
+				if accessor.GetLabels()["vendor"] != "OpenShift" ||
+					accessor.GetLabels()["hoh"] == "disabled" || accessor.GetName() == "local-cluster" {
 					return false
 				} else {
 					return true
@@ -123,6 +126,16 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 		hypershiftDeploymentNamespace = splits[0]
 		hostedClusterName = splits[1]
+
+		// for managedcluster that is hypershift hosted cluster, add new label
+		labels := managedCluster.GetLabels()
+		if val, ok := labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"]; !ok || val != "true" {
+			labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"] = "true"
+			managedCluster.SetLabels(labels)
+			if _, err := c.clusterClient.ManagedClusters().Update(ctx, managedCluster, metav1.UpdateOptions{}); err != nil {
+				return err
+			}
+		}
 	}
 
 	if !managedCluster.DeletionTimestamp.IsZero() {

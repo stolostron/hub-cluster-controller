@@ -81,6 +81,7 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 		dynamicClient,
 		kubeClient,
 		workClient.WorkV1(),
+		clusterClient.ClusterV1(),
 		clusterInformers.Cluster().V1().ManagedClusters(),
 		workInformers.Work().V1().ManifestWorks(),
 		controllerContext.EventRecorder,
