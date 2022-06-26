@@ -27,4 +27,7 @@ rules:
 - apiGroups: ["apps.open-cluster-management.io"]
   resources: ["channels", "subscriptions", "placementrules"]
   verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: ["cluster.open-cluster-management.io"]
+  resources: ["hypershiftdeployments"]
+  verbs: ["get", "list", "watch"]
 

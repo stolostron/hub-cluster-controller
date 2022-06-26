@@ -10,7 +10,9 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -104,7 +106,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return err
 	}
 
-	hostingClusterName, hostedClusterName := "", ""
+	hostingClusterName, hostedClusterName, hypershiftDeploymentNamespace := "", "", ""
 	annotations := managedCluster.GetAnnotations()
 	if val, ok := annotations["import.open-cluster-management.io/klusterlet-deploy-mode"]; ok && val == "Hosted" {
 		hostingClusterName, ok = annotations["import.open-cluster-management.io/hosting-cluster-name"]
@@ -119,6 +121,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		if len(splits) != 2 || splits[1] == "" {
 			return fmt.Errorf("bad hypershiftdeployment name in managed cluster.")
 		}
+		hypershiftDeploymentNamespace = splits[0]
 		hostedClusterName = splits[1]
 	}
 
@@ -173,7 +176,20 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			return nil
 		}
 
-		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, "")
+		hypershiftDeploymentGVR := schema.GroupVersionResource{
+			Group:    "cluster.open-cluster-management.io",
+			Version:  "v1alpha1",
+			Resource: "hypershiftdeployments",
+		}
+		hypershiftDeploymentCR, err := c.dynamicClient.Resource(hypershiftDeploymentGVR).Namespace(hypershiftDeploymentNamespace).
+			Get(ctx, hostedClusterName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		hypershiftDeploymentSpec := hypershiftDeploymentCR.Object["spec"].(map[string]interface{})
+		hostingNamespace := hypershiftDeploymentSpec["hostingNamespace"].(string)
+
+		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, "")
 		if err != nil {
 			klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
 			return err
@@ -192,7 +208,7 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 					if value.Name == "clusterIP" && value.Value.String != nil {
 						klog.V(2).Infof("Got clusterIP for channel service %s", *value.Value.String)
 						channelClusterIP := *value.Value.String
-						_, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP)
+						_, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP)
 						if err != nil {
 							return err
 						}

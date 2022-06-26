@@ -721,7 +721,7 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 }
 
 func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
-	managedClusterName, hostingClusterName, hostedClusterName, channelClusterIP string) (*workv1.ManifestWork, error) {
+	managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP string) (*workv1.ManifestWork, error) {
 	p := packagemanifest.GetPackageManifest()
 	if p == nil || len(p.ACMImages) == 0 || len(p.MCEImages) == 0 {
 		return nil, nil
@@ -746,7 +746,8 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		return nil, err
 	}
 
-	defaultHypershiftConfigValues.HostedClusterName = "clusters-" + hostedClusterName
+	hypershiftHostedClusterName := hostingNamespace + hostedClusterName
+	defaultHypershiftConfigValues.HostedClusterName = hypershiftHostedClusterName
 	defaultHypershiftConfigValues.ImagePullSecret = imagePullSecretName
 	defaultHypershiftConfigValues.MCE.DefaultImageRegistry = mceDefaultImageRegistry
 
@@ -781,7 +782,7 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		}
 	}
 
-	imagePullSecret, err := generatePullSecret(kubeClient, "clusters-"+hostedClusterName)
+	imagePullSecret, err := generatePullSecret(kubeClient, hypershiftHostedClusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +865,7 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 						Group:     "",
 						Resource:  "services",
 						Name:      "channels-apps-open-cluster-management-webhook-svc",
-						Namespace: "clusters-" + hostedClusterName,
+						Namespace: hypershiftHostedClusterName,
 					},
 					FeedbackRules: []workv1.FeedbackRule{
 						{
