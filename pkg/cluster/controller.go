@@ -127,11 +127,23 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		hypershiftDeploymentNamespace = splits[0]
 		hostedClusterName = splits[1]
 
+		isManagedClusterChanged := false
+		// for managedcluster that is hypershift hosted cluster, add new annotation
+		if val, ok := annotations["hub-of-hubs.open-cluster-management.io/managed-by-hoh"]; !ok || val != "true" {
+			annotations["hub-of-hubs.open-cluster-management.io/managed-by-hoh"] = "true"
+			managedCluster.SetAnnotations(annotations)
+			isManagedClusterChanged = true
+		}
+
 		// for managedcluster that is hypershift hosted cluster, add new label
 		labels := managedCluster.GetLabels()
 		if val, ok := labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"]; !ok || val != "true" {
 			labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"] = "true"
 			managedCluster.SetLabels(labels)
+			isManagedClusterChanged = true
+		}
+
+		if isManagedClusterChanged {
 			if _, err := c.clusterClient.ManagedClusters().Update(ctx, managedCluster, metav1.UpdateOptions{}); err != nil {
 				return err
 			}
