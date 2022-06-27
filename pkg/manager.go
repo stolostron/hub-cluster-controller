@@ -78,8 +78,10 @@ func runControllerManager(ctx context.Context, controllerContext *controllercmd.
 	)
 
 	hubClusterController := cluster.NewHubClusterController(
+		dynamicClient,
 		kubeClient,
 		workClient.WorkV1(),
+		clusterClient.ClusterV1(),
 		clusterInformers.Cluster().V1().ManagedClusters(),
 		workInformers.Work().V1().ManifestWorks(),
 		controllerContext.EventRecorder,

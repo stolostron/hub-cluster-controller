@@ -32,6 +32,8 @@ spec:
               fieldPath: metadata.namespace
         - name: SNAPSHOT
           value: "$SNAPSHOT"
+        - name: MCE_SNAPSHOT
+          value: "$MCE_SNAPSHOT"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

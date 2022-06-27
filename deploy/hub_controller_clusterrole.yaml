@@ -6,7 +6,7 @@ rules:
 # Allow hub to manage managedclusters
 - apiGroups: ["cluster.open-cluster-management.io"]
   resources: ["managedclusters"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups: ["cluster.open-cluster-management.io"]
   resources: ["managedclusters/status"]
   verbs: ["update", "patch"]
@@ -21,3 +21,13 @@ rules:
 - apiGroups: ["packages.operators.coreos.com"]
   resources: ["packagemanifests"]
   verbs: ["get", "list"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps.open-cluster-management.io"]
+  resources: ["channels", "subscriptions", "placementrules"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: ["cluster.open-cluster-management.io"]
+  resources: ["hypershiftdeployments"]
+  verbs: ["get", "list", "watch"]
+
