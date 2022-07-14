@@ -23,6 +23,8 @@ import (
 	workclientv1 "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
 	workinformerv1 "open-cluster-management.io/api/client/work/informers/externalversions/work/v1"
 	worklisterv1 "open-cluster-management.io/api/client/work/listers/work/v1"
+
+	"github.com/stolostron/hub-cluster-controller/pkg/packagemanifest"
 )
 
 // clusterController reconciles instances of ManagedCluster on the hub.
@@ -127,23 +129,10 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		hypershiftDeploymentNamespace = splits[0]
 		hostedClusterName = splits[1]
 
-		isManagedClusterChanged := false
 		// for managedcluster that is hypershift hosted cluster, add new annotation
 		if val, ok := annotations["hub-of-hubs.open-cluster-management.io/managed-by-hoh"]; !ok || val != "true" {
 			annotations["hub-of-hubs.open-cluster-management.io/managed-by-hoh"] = "true"
 			managedCluster.SetAnnotations(annotations)
-			isManagedClusterChanged = true
-		}
-
-		// for managedcluster that is hypershift hosted cluster, add new label
-		labels := managedCluster.GetLabels()
-		if val, ok := labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"]; !ok || val != "true" {
-			labels["hub-of-hubs.open-cluster-management.io/created-by-hypershift"] = "true"
-			managedCluster.SetLabels(labels)
-			isManagedClusterChanged = true
-		}
-
-		if isManagedClusterChanged {
 			if _, err := c.clusterClient.ManagedClusters().Update(ctx, managedCluster, metav1.UpdateOptions{}); err != nil {
 				return err
 			}
@@ -189,13 +178,8 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 			}
 		}
 	} else { // for hypershift hosted leaf hub
-		// apply the CRDs into hypershift hosted cluster via helm chart subscription
-		packageManifestReady, err := ApplyHubHelmSub(ctx, c.dynamicClient, managedClusterName)
-		if err != nil {
-			return err
-		}
-
-		if !packageManifestReady {
+		p := packagemanifest.GetPackageManifest()
+		if p == nil || p.ACMCurrentCSV == "" || p.ACMDefaultChannel == "" {
 			klog.V(2).Infof("package manifest is not ready, retry after 1 second")
 			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
 			return nil
