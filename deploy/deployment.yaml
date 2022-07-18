@@ -24,6 +24,8 @@ spec:
           - "controller"
           - "--v=2"
         env:
+        - name: HUB_OF_HUBS_VERSION
+          value: "$TAG"
         - name: IMAGE_PULL_SECRET
           value: "$IMAGE_PULL_SECRET"
         - name: POD_NAMESPACE
