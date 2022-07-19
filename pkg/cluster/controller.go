@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -198,27 +199,25 @@ func (c *clusterController) sync(ctx context.Context, syncCtx factory.SyncContex
 		hypershiftDeploymentSpec := hypershiftDeploymentCR.Object["spec"].(map[string]interface{})
 		hostingNamespace := hypershiftDeploymentSpec["hostingNamespace"].(string)
 
-		hubManifestwork, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, "")
-		if err != nil {
-			klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
-			return err
-		}
-
-		if hubManifestwork == nil {
-			klog.V(2).Infof("hub manifestwork is nil, retry after 1 second")
-			syncCtx.Queue().AddAfter(managedClusterName, 1*time.Second)
+		hubMgtManifestwork, err := c.workLister.ManifestWorks(hostingClusterName).Get(managedClusterName + "-hoh-hub-cluster-management")
+		if errors.IsNotFound(err) {
+			klog.V(2).Infof("creating hub manifestwork for managedcluster %s", managedClusterName)
+			if err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, ""); err != nil {
+				klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
+				return err
+			}
 			return nil
 		}
 
-		klog.V(2).Infof("checking status feedback value from hub manifestwork before applying mch manifestwork")
-		for _, manifestCondition := range hubManifestwork.Status.ResourceStatus.Manifests {
+		klog.V(2).Infof("checking status feedback value from hub manifestwork before applying channel service in manifestwork")
+		for _, manifestCondition := range hubMgtManifestwork.Status.ResourceStatus.Manifests {
 			if manifestCondition.ResourceMeta.Kind == "Service" {
 				for _, value := range manifestCondition.StatusFeedbacks.Values {
 					if value.Name == "clusterIP" && value.Value.String != nil {
 						klog.V(2).Infof("Got clusterIP for channel service %s", *value.Value.String)
 						channelClusterIP := *value.Value.String
-						_, err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP)
-						if err != nil {
+						if err := ApplyHubManifestWorks(ctx, c.kubeClient, c.workClient, c.workLister, managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP); err != nil {
+							klog.V(2).Infof("failed to apply hub manifestwork: %v", err)
 							return err
 						}
 						return nil
