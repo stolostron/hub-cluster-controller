@@ -68,6 +68,8 @@ type MCEImageEntry struct {
 }
 
 type HypershiftConfigValues struct {
+	HubVersion        string
+	HoHAgentVersion   string
 	HostedClusterName string
 	ImagePullSecret   string
 	ChannelClusterIP  string
@@ -98,12 +100,16 @@ var defaultHypershiftConfigValues = HypershiftConfigValues{
 }
 
 var decUnstructured = yamlserializer.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-var podNamespace, snapshot, mceSnapshot, imagePullSecretName string
+var podNamespace, hohVersion, snapshot, mceSnapshot, imagePullSecretName string
 
 func init() {
 	// for test develop version
 	snapshot, _ = os.LookupEnv("SNAPSHOT")
 	mceSnapshot, _ = os.LookupEnv("MCE_SNAPSHOT")
+	hohVersion, _ = os.LookupEnv("HUB_OF_HUBS_VERSION")
+	if hohVersion == "" {
+		hohVersion = "latest"
+	}
 	podNamespace, _ = os.LookupEnv("POD_NAMESPACE")
 	imagePullSecretName, _ = os.LookupEnv("IMAGE_PULL_SECRET")
 	if imagePullSecretName == "" {
@@ -723,7 +729,7 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
 	managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP string) (*workv1.ManifestWork, error) {
 	p := packagemanifest.GetPackageManifest()
-	if p == nil || len(p.ACMImages) == 0 || len(p.MCEImages) == 0 {
+	if p == nil || len(p.ACMImages) == 0 || len(p.MCEImages) == 0 || p.ACMCurrentCSV == "" || p.ACMDefaultChannel == "" {
 		return nil, nil
 	}
 
@@ -747,6 +753,14 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 	}
 
 	hypershiftHostedClusterName := hostingNamespace + "-" + hostedClusterName
+	latestACMVersion := strings.TrimPrefix(p.ACMCurrentCSV, "advanced-cluster-management.v")
+	latestACMVersionParts := strings.Split(latestACMVersion, ".")
+	if len(latestACMVersionParts) < 2 {
+		return nil, fmt.Errorf("invalid ACM version :%s", latestACMVersion)
+	}
+	latestACMVersionM := strings.Join(latestACMVersionParts[:2], ".")
+	defaultHypershiftConfigValues.HubVersion = latestACMVersionM
+	defaultHypershiftConfigValues.HoHAgentVersion = hohVersion
 	defaultHypershiftConfigValues.HostedClusterName = hypershiftHostedClusterName
 	defaultHypershiftConfigValues.ImagePullSecret = imagePullSecretName
 	defaultHypershiftConfigValues.MCE.DefaultImageRegistry = mceDefaultImageRegistry
