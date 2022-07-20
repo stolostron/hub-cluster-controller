@@ -4,7 +4,6 @@ metadata:
   name: hoh-of-hubs-agent-applier
   namespace: {{ .HostedClusterName }}
 spec:
-  backoffLimit: 5
   template:
     metadata:
       labels:
@@ -27,5 +26,5 @@ spec:
         secret:
           defaultMode: 420
           secretName: service-network-admin-kubeconfig
-      restartPolicy: Never
+      restartPolicy: OnFailure
 
