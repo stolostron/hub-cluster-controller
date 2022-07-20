@@ -727,10 +727,10 @@ func removePostponeDeleteAnnotationForSubManifestwork(ctx context.Context, workc
 }
 
 func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset, workclient workclientv1.WorkV1Interface, workLister worklisterv1.ManifestWorkLister,
-	managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP string) (*workv1.ManifestWork, error) {
+	managedClusterName, hostingClusterName, hostingNamespace, hostedClusterName, channelClusterIP string) error {
 	p := packagemanifest.GetPackageManifest()
 	if p == nil || len(p.ACMImages) == 0 || len(p.MCEImages) == 0 || p.ACMCurrentCSV == "" || p.ACMDefaultChannel == "" {
-		return nil, nil
+		return nil
 	}
 
 	acmImages := p.ACMImages
@@ -749,14 +749,14 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 
 	tpl, err := parseTemplates(manifestFS, snapshot, mceSnapshot, acmDefaultImageRegistry, mceDefaultImageRegistry, acmImages, mceImages)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	hypershiftHostedClusterName := hostingNamespace + "-" + hostedClusterName
 	latestACMVersion := strings.TrimPrefix(p.ACMCurrentCSV, "advanced-cluster-management.v")
 	latestACMVersionParts := strings.Split(latestACMVersion, ".")
 	if len(latestACMVersionParts) < 2 {
-		return nil, fmt.Errorf("invalid ACM version :%s", latestACMVersion)
+		return fmt.Errorf("invalid ACM version :%s", latestACMVersion)
 	}
 	latestACMVersionM := strings.Join(latestACMVersionParts[:2], ".")
 	defaultHypershiftConfigValues.HubVersion = latestACMVersionM
@@ -767,27 +767,30 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 
 	if channelClusterIP != "" {
 		defaultHypershiftConfigValues.ChannelClusterIP = channelClusterIP
+	} else {
+		defaultHypershiftConfigValues.ChannelClusterIP = ""
 	}
 
 	// apply manifestwork on hypershift hosted cluster
-	var buf bytes.Buffer
-	tpl.ExecuteTemplate(&buf, "manifests/hypershift/hosted", defaultHypershiftConfigValues)
-	// klog.V(2).Infof("templates for objects on hosted cluster: %s", buf.String())
+	var buf1 bytes.Buffer
+	tpl.ExecuteTemplate(&buf1, "manifests/hypershift/hosted", defaultHypershiftConfigValues)
+	// klog.V(2).Infof("templates for objects on hosted cluster: %s", buf1.String())
 
 	hostedManifests := []workv1.Manifest{}
-	yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
+	yamlReader1 := yaml.NewYAMLReader(bufio.NewReader(&buf1))
 	for {
-		b, err := yamlReader.Read()
+		b, err := yamlReader1.Read()
 		if err == io.EOF {
+			buf1.Reset()
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(b) != 0 {
 			rawJSON, err := yaml.ToJSON(b)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if string(rawJSON) != "null" {
 				// klog.V(2).Infof("raw JSON for object on hosted cluster:\n%s\n", rawJSON)
@@ -798,7 +801,7 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 
 	imagePullSecret, err := generatePullSecret(kubeClient, hypershiftHostedClusterName)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if imagePullSecret != nil {
 		hostedManifests = append(hostedManifests, workv1.Manifest{RawExtension: runtime.RawExtension{Object: imagePullSecret}})
@@ -824,28 +827,29 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 
 	// klog.V(2).Infof("manifestwork on hosted cluster: %+v", hostedManifests)
 	if _, err := applyManifestWork(ctx, workclient, workLister, hostedManifestwork); err != nil {
-		return nil, err
+		return err
 	}
 
 	// manifestwork on hypershift management cluster
-	buf.Reset()
-	tpl.ExecuteTemplate(&buf, "manifests/hypershift/management", defaultHypershiftConfigValues)
-	// klog.V(2).Infof("templates for objects on management cluster: %s", buf.String())
+	var buf2 bytes.Buffer
+	tpl.ExecuteTemplate(&buf2, "manifests/hypershift/management", defaultHypershiftConfigValues)
+	// klog.V(2).Infof("templates for objects on management cluster: %s", buf2.String())
 
 	managementManifests := []workv1.Manifest{}
-	// yamlReader := yaml.NewYAMLReader(bufio.NewReader(&buf))
+	yamlReader2 := yaml.NewYAMLReader(bufio.NewReader(&buf2))
 	for {
-		b, err := yamlReader.Read()
+		b, err := yamlReader2.Read()
 		if err == io.EOF {
+			buf2.Reset()
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(b) != 0 {
 			rawJSON, err := yaml.ToJSON(b)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if string(rawJSON) != "null" {
 				// klog.V(2).Infof("raw JSON for object on management cluster:\n%s\n", rawJSON)
@@ -897,7 +901,8 @@ func ApplyHubManifestWorks(ctx context.Context, kubeClient *kubernetes.Clientset
 		},
 	}
 
-	return applyManifestWork(ctx, workclient, workLister, managementManifestwork)
+	_, err = applyManifestWork(ctx, workclient, workLister, managementManifestwork)
+	return err
 }
 
 func removeHubManifestworkFromHyperMgtCluster(ctx context.Context, workclient workclientv1.WorkV1Interface,
