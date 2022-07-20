@@ -45,7 +45,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   creationTimestamp: null
-  name: governance-policy-propagator
+  name: governance-policy-propagator-{{.HostedClusterName}}
 rules:
 - apiGroups:
   - apps.open-cluster-management.io
@@ -231,11 +231,11 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: governance-policy-propagator-global
+  name: governance-policy-propagator-{{.HostedClusterName}}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: governance-policy-propagator
+  name: governance-policy-propagator-{{.HostedClusterName}}
 subjects:
 - kind: ServiceAccount
   name: governance-policy-propagator

@@ -8,25 +8,31 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: multicluster-operators
+  name: multicluster-operators-{{.HostedClusterName}}
 rules:
 - apiGroups:
-  - '*'
+  - ''
   resources:
+  - 'services'
+  verbs:
   - '*'
+- apiGroups:
+  - 'apps'
+  resources:
+  - 'deployments'
   verbs:
   - '*'
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: multicluster-operators
+  name: multicluster-operators-{{.HostedClusterName}}
 subjects:
 - kind: ServiceAccount
   name: multicluster-operators
   namespace: {{.HostedClusterName}}
 roleRef:
   kind: ClusterRole
-  name: multicluster-operators
+  name: multicluster-operators-{{.HostedClusterName}}
   apiGroup: rbac.authorization.k8s.io
 ---

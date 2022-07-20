@@ -51,7 +51,7 @@ metadata:
   creationTimestamp: null
   labels:
     app: governance-policy-addon-controller
-  name: policy-addon-ctrl-manager-role
+  name: policy-addon-ctrl-manager-role-{{.HostedClusterName}}
 rules:
 - apiGroups:
   - addon.open-cluster-management.io
@@ -289,11 +289,11 @@ kind: ClusterRoleBinding
 metadata:
   labels:
     app: governance-policy-addon-controller
-  name: policy-addon-ctrl-manager-rolebinding
+  name: policy-addon-ctrl-manager-rolebinding-{{.HostedClusterName}}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: policy-addon-ctrl-manager-role
+  name: policy-addon-ctrl-manager-role-{{.HostedClusterName}}
 subjects:
 - kind: ServiceAccount
   name: policy-addon-ctrl-controller-manager
